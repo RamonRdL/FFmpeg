@@ -62,8 +62,8 @@
 #define PI 3.14159265358979323846
 #define SIZE 10000
 
-static const char* version = "2.05.08";
-static const char* release_date = "2023.10.27";
+static const char* version = "2.06.01";
+static const char* release_date = "2023.11.02";
 static int video_frame_count = 0;
 static int counter = 0;  // Used for history storing, to store, how many objects we have
 static int id_counter = 0;
@@ -101,8 +101,8 @@ typedef struct TDContext {
     double resize_ratio_y;
     int max_distance;
     int min_mv;
-    int start_x;
-    int start_y;
+    double start_x;  // its double because we set thiese values at the input, what coud be a float to use relative size
+    double start_y;
     int end_x;
     int end_y;
     int tripwire;
@@ -126,6 +126,7 @@ typedef struct TDContext {
     int filter_id; ///< unique id for the filter
     const char* url;
     double tripwire_line_angle;
+    int tripwire_type;
     int std_err_text_output_enable;
 } TDContext;
 
@@ -167,6 +168,8 @@ typedef struct Object {
     int dir_counter;
     int side;    ///< 1 - from left or down to the tripwire, -1 - from right or above the tripwire
     int color[3];
+    int exists_counter; // how much times the objects get detected
+    int stayed_in_side; // how much times the object get detected in a particular state
 } Object;
 
 Object *last_frames_object[SIZE];
@@ -185,10 +188,11 @@ Object *objects_with_id[SIZE]; ///< storage for the IDs
 static const AVOption object_tracker_options[] = {
         // tripwire
         {"tripwire", "turn the tripwire on or off", OFFSET(tripwire), AV_OPT_TYPE_BOOL, {.i64 = 1}, 0, 1, FLAGS },
-        {"tripwire_line_px", "a point's x coordinate what the tripwire will cross", OFFSET(start_x), AV_OPT_TYPE_INT, {.i64 = -1}, -1, 10000, FLAGS },
-        {"tripwire_line_py", "a point's y coordinate what the tripwire will cross", OFFSET(start_y), AV_OPT_TYPE_INT, {.i64 = -1}, -1, 10000, FLAGS },
-        {"tripwire_line_angle", "set the angle for the tripwire", OFFSET(tripwire_line_angle), AV_OPT_TYPE_DOUBLE, {.dbl = 90}, 0, 360, FLAGS },  
+        {"tripwire_line_px", "a point's x coordinate what the tripwire will cross", OFFSET(start_x), AV_OPT_TYPE_DOUBLE, {.dbl = -1}, -1, 10000, FLAGS },
+        {"tripwire_line_py", "a point's y coordinate what the tripwire will cross", OFFSET(start_y), AV_OPT_TYPE_DOUBLE, {.dbl = -1}, -1, 10000, FLAGS },
+        {"tripwire_line_angle", "set the angle for the tripwire", OFFSET(tripwire_line_angle), AV_OPT_TYPE_DOUBLE, {.dbl = 90}, 0, 180, FLAGS },  
         {"tripwire_marker_line", "set the tripwire visibility", OFFSET(tripwire_marker_line), AV_OPT_TYPE_BOOL, {.i64 = 1}, 0, 1, FLAGS },
+        {"tripwire_type", "0: touch, 1: the center goes throug", OFFSET(tripwire_type), AV_OPT_TYPE_BOOL, {.i64 = 0}, 0, 1, FLAGS },
 
          //motion vector filter
         {"max_mv_distance", "max mv & object distance, to put the mv into the object", OFFSET(max_distance), AV_OPT_TYPE_INT, {.i64 = 50}, 0, 10000, FLAGS },
@@ -255,11 +259,17 @@ static const enum AVPixelFormat pix_fmts[] = {
  */
 static int which_side(int line_x1, int line_y1, int line_x2, int line_y2, int point_x1, int point_y1)
 {
-    if ((line_x2 - line_x1) * (point_y1 - line_y1) - (line_y2 - line_y1) * (point_x1 - line_x1) > 0)
+    int position_value;
+    if (line_x1 > line_x2){
+        FFSWAP(int, line_x1, line_x2);
+        FFSWAP(int, line_y1, line_y2);
+    }
+    position_value = (line_x2 - line_x1) * (point_y1 - line_y1) - (line_y2 - line_y1) * (point_x1 - line_x1);
+    if (position_value > 0)
         return -1; // to left or under
-    else if ((line_x2 - line_x1) * (point_y1 - line_y1) - (line_y2 - line_y1) * (point_x1 - line_x1) < 0)
+    else if (position_value < 0)
         return 1; // to right or above
-    return 0;
+    return 1;  // return 0;
 }
 
 /**
@@ -540,6 +550,8 @@ static Object* create_object(void)
     o->speed_y = 0;
     o->predicted_x = 0;
     o->predicted_y = 0;
+    o->exists_counter = 0;
+    o->stayed_in_side = 0;
     return o;
 }
 
@@ -621,13 +633,13 @@ static void replace(char * o_string, char * s_string, char * r_string)
  */
 static void print_json(Object *obj, TDContext *s)
 { 
-    int bool = 1;
+    int crossed_event;
     int watcher = 0;
     // char *side = (obj->side == -1 ? (char *)"A" : obj->side == 1 ? (char *)"B" : (char *)"AB");
     char lite_str[] ="{\n\t\"module\": \"object_tracker\",\n\t\"frame\": %d,\n\t\"obj_id\": %d,\n\t\"obj_center_x\": %d,\n\t\"obj_center_y\": %d\n}\n";
     char str[] = "{\n\t\"module\": \"object_tracker\",\n\t\"filter_id\": %d,\n\t\"intersect\": %d,\n\t\"frame\": %d,\n\t\"detected_objects\": %d,\n\t\"obj_id\": %d,\n\t\"obj_avg_angle\": %4.2f,\n"
                 "\t\"obj_center_x\": %d,\n\t\"obj_center_y\": %d,\n\t\"mv_num\": %d,\n\t\"mv_avg_len\": %4.2f,\n\t\"obj_x1\": %d,\n\t\"obj_y1\": %d,\n\t\"obj_x2\": %d,\n\t\"obj_y2\": %d,\n"
-                "\t\"obj_x3\": %d,\n\t\"obj_y3\": %d,\n\t\"obj_x4\": %d,\n\t\"obj_y4\": %d,\n\t\"crossed\": %d,\n\t\"side\": %d}\n";
+                "\t\"obj_x3\": %d,\n\t\"obj_y3\": %d,\n\t\"obj_x4\": %d,\n\t\"obj_y4\": %d,\n\t\"crossed\": %d,\n\t\"crossed_direction\": %d,\n\t\"stayed_in_side\": %d,\n\t\"side\": %d}\n";
     char *output_str;
     char rect_position[5*SIZE] = {""};
     char rect[SIZE] = ""; // Initialize to empty string
@@ -658,24 +670,22 @@ static void print_json(Object *obj, TDContext *s)
         replace(output_str, (char *)"\n\t", (char *)" ");
     }
 
-    if (s->print_only_intersect_trigger) {
-        bool = 0;
-        if (obj->intersect) {
-            for (int i = 0; i < printed_counter; i++) {
-                if (printed_ids[i] == obj->id) {
-                    bool = 0;
-                    watcher = 1;
-                    break;
-                }
-            }
-            if (!watcher) {
-                printed_ids[printed_counter] = obj->id;
-                printed_counter++;
-                bool = 1;
+    crossed_event = 0;
+    if (obj->intersect) {
+        for (int i = 0; i < printed_counter; i++) {
+            if (printed_ids[i] == obj->id) {
+                crossed_event = 0;
+                watcher = 1;
+                break;
             }
         }
+        if (!watcher) {
+            printed_ids[printed_counter] = obj->id;
+            printed_counter++;
+            crossed_event = 1;
+        }
     }
-    if (bool) {
+    if (crossed_event || !s->print_only_intersect_trigger) {  // its a crossed event, or the not crossed events arent filtered
         if(s->print_lite_mode){
             if (s->std_err_text_output_enable == 0) //stdout
                 printf(output_str, video_frame_count, obj->id, obj->center_x, obj->center_y); 
@@ -688,16 +698,16 @@ static void print_json(Object *obj, TDContext *s)
         }else{
             if (s->std_err_text_output_enable == 0) {
                 printf(output_str,          s->filter_id, obj->intersect, video_frame_count, id_counter, obj->id, obj->average_angle, obj->center_x, obj->center_y, obj->counter, obj->average_length,
-                                            obj->x_min, obj->y_min, obj->x_max, obj->y_min, obj->x_max, obj->y_max, obj->x_min, obj->y_max, obj->crossed, obj->side, rect_position); 
+                                            obj->x_min, obj->y_min, obj->x_max, obj->y_min, obj->x_max, obj->y_max, obj->x_min, obj->y_max, crossed_event, obj->crossed, obj->stayed_in_side, obj->side, rect_position); 
             }
             if (s->std_err_text_output_enable == 1) {
                 fprintf(stderr, output_str, s->filter_id, obj->intersect, video_frame_count, id_counter, obj->id, obj->average_angle, obj->center_x, obj->center_y, obj->counter, obj->average_length,
-                                            obj->x_min, obj->y_min, obj->x_max, obj->y_min, obj->x_max, obj->y_max, obj->x_min, obj->y_max, obj->crossed, obj->side, rect_position);
+                                            obj->x_min, obj->y_min, obj->x_max, obj->y_min, obj->x_max, obj->y_max, obj->x_min, obj->y_max, crossed_event, obj->crossed, obj->stayed_in_side, obj->side, rect_position);
             }
             if (s->url) {
                 s->bytes += sprintf(s->buffer + s->bytes, (const char*)str, 
                                             s->filter_id, obj->intersect, video_frame_count, id_counter, obj->id, obj->average_angle, obj->center_x, obj->center_y, obj->counter, obj->average_length, 
-                                            obj->x_min, obj->y_min, obj->x_max, obj->y_min, obj->x_max, obj->y_max, obj->x_min, obj->y_max, obj->crossed, obj->side, rect_position);
+                                            obj->x_min, obj->y_min, obj->x_max, obj->y_min, obj->x_max, obj->y_max, obj->x_min, obj->y_max, crossed_event, obj->crossed, obj->stayed_in_side, obj->side, rect_position);
                 s->buffer = (char*) realloc(s->buffer, s->bytes * sizeof(int));
             }  
         }
@@ -779,7 +789,7 @@ static void object_id_check(Object *obj, TDContext *s)
         store_object(obj, s);
     } else {
         for (int i = 0; i < id_counter; i++) {  // loop through every object
-            if (objects_with_id[i] == NULL)  // Object deleted
+            if (objects_with_id[i] == NULL)     // Object deleted
                 continue;
             punish_point = 0;
             predicted_distance = distance(objects_with_id[i]->predicted_x, objects_with_id[i]->predicted_y, obj->center_x, obj->center_y);
@@ -799,8 +809,8 @@ static void object_id_check(Object *obj, TDContext *s)
              }
             if (objects_with_id[i]->frame_num != obj->frame_num) { // The object is from the past
                 // Weighted score calculation
-                double score = ((distance_tmp / 10) + 2 * (angle_diff / 360)) - punish_point; // weighted score create
-                if (score < best_score) {
+                double score = ((distance_tmp / 10) + 2 * (angle_diff / 360)) + punish_point; // weighted score create
+                if (score < best_score) {  // smaller score are better
                     best_score = score;
                     _distance = distance_tmp;
                     index = i;
@@ -810,12 +820,27 @@ static void object_id_check(Object *obj, TDContext *s)
     }
     if (_distance < s->max_obj_distance_history) { // If in this distance the two object is small enough the two object get the same id & refresh data
         obj->id = objects_with_id[index]->id;
+        if (s->tripwire_type){  // center goes throug
+            if ((objects_with_id[index]->side == 1 && obj->side == -1) || (objects_with_id[index]->side == -1 && obj->side == 1))
+                obj->intersect = 1;
+        }else{  // touch
+            if ((objects_with_id[index]->side == 2 && obj->side != 2) || (objects_with_id[index]->side == -2 && obj->side != -2))
+                obj->intersect = 1;
+        }
+
+        if (objects_with_id[index]->side == obj->side)
+            objects_with_id[index]->stayed_in_side++;
+        else
+            objects_with_id[index]->stayed_in_side = 0;
+        obj->stayed_in_side = objects_with_id[index]->stayed_in_side;
         objects_with_id[index]->predicted_x = obj->center_x + (obj->center_x - objects_with_id[index]->center_x);
         objects_with_id[index]->predicted_y = obj->center_y + (obj->center_y - objects_with_id[index]->center_y);
         objects_with_id[index]->frame_num = obj->frame_num;
         objects_with_id[index]->center_x = obj->center_x;
         objects_with_id[index]->center_y = obj->center_y;
         objects_with_id[index]->average_angle = obj->average_angle;
+        objects_with_id[index]->exists_counter++;
+        obj->exists_counter = objects_with_id[index]->exists_counter;
         if (obj->intersect)
             obj->crossed = objects_with_id[index]->side;
         objects_with_id[index]->side = obj->side;
@@ -861,6 +886,22 @@ static int find_min(int array[], int array_length)
     return min;
 }
 
+static int is_object_multiple_side(Object *obj, TDContext *s){
+
+    int side = 0;
+    int previous_side = 0;
+    for (int i = 0; i < obj->rectangle_counter; i++)
+    {
+        side = which_side(s->start_x, s->start_y, s->end_x, s->end_y, obj->rectangles[i].x, obj->rectangles[i].y);
+        if (side == previous_side || previous_side == 0){
+            previous_side = side;
+        }else{
+            return 1;
+        }
+    }
+    return 0;
+}
+
 /**
  * Calculate object variables after the motion vector sorting is done.
  * 
@@ -871,6 +912,7 @@ static void check_object(Object *obj, TDContext *s, AVFrame *frame)
 {
     int left_upper, right_down, left_down, right_upper;
     double min_angle, max_angle;
+    int center_side;
 
     min_angle = s->angle - s->angle_range;  // define angle range filter
     max_angle = s->angle + s->angle_range;
@@ -888,21 +930,20 @@ static void check_object(Object *obj, TDContext *s, AVFrame *frame)
             left_down = which_side(s->start_x, s->start_y, s->end_x, s->end_y, obj->x_min, obj->y_max);
             right_upper = which_side(s->start_x, s->start_y, s->end_x, s->end_y, obj->x_max, obj->y_min);
             right_down = which_side(s->start_x, s->start_y, s->end_x, s->end_y, obj->x_max, obj->y_max);
-            obj->intersect = 1;
-            obj->side = 0;
+            center_side = which_side(s->start_x, s->start_y, s->end_x, s->end_y, obj->center_x, obj->center_y);
+            obj->side = center_side;
 
             if (right_down == 1 && right_upper == 1 && left_upper == 1  && left_down == 1){
-                obj->intersect = 0;
-                obj->side = 1;
+                obj->side = 2;
             }
             if (right_down == -1 && right_upper == -1 && left_upper == -1  && left_down == -1){
-                obj->intersect = 0;
-                obj->side = -1;
+                obj->side = -2;
             }
-            if (left_upper == right_down)
-                obj->side = left_upper;
-            else
-                obj->side = 0; // both sides of the tripwire
+
+            if (obj->side == -1 || obj->side == 1){
+                if (!is_object_multiple_side(obj, s))
+                    obj->side *= 2;
+            }
         }
         object_id_check(obj, s);
         if(s->object_marker_box_history)
@@ -945,8 +986,12 @@ static void add_to_object(Object* obj, int src_x, int src_y, int dst_x, int dst_
 
 static int config_input(AVFilterLink *inlink)
 {
-    int angle;
-    double angle_rad, dx, dy, x_start, y_start, x_end, y_end;
+    double angle_rad, dx, dy;
+    double x_left, y_left, x_right, y_right, x_top, y_top, x_bottom, y_bottom;
+    int x_coordinates[4], y_coordinates[4];
+    int valid_coordinates[8];
+    int valid_coordinate_counter = 0;
+
     AVFilterContext *ctx = inlink->dst;
     TDContext *s = ctx->priv;
     s->filter_id = ctx->name[strlen(ctx->name) - 1] - '0';
@@ -957,88 +1002,59 @@ static int config_input(AVFilterLink *inlink)
     if (s->url) 
         open_connection(s, s->url);
 
-
+    if (0 < s->start_x && s->start_x < 1)  // between 1 and 0, use relative size
+        s->start_x = inlink->w * s->start_x;
+    if (0 < s->start_y && s->start_y < 1)
+        s->start_y = inlink->h * s->start_y;
     
     if (s->start_x == -1)  //   set the default value from -1 to center point.
         s->start_x = inlink->w/2;
     if (s->start_y == -1)
         s->start_y = inlink->h/2;
 
-    //  Convert it to radians.
-    if (90 < s->tripwire_line_angle && s->tripwire_line_angle <= 270)
-        angle = s->tripwire_line_angle;
-    else
-        angle = 180 + s->tripwire_line_angle;  // a line will be the same after turning 180.
-
-    angle_rad = angle * M_PI / 180.0;
-
-    //  Calculate the line's direction vector (dx, dy).
+    angle_rad = s->tripwire_line_angle * M_PI / 180.0;
+    angle_rad = M_PI - angle_rad;
+    
     dx = cos(angle_rad);
     dy = sin(angle_rad);
 
-
-    //  Initialize start and end points
-    x_start = DBL_MAX, y_start = DBL_MAX;
-    x_end = DBL_MAX, y_end = DBL_MAX;
-
-    //  Calculate the intersection points with all four boundaries.
-    //  Check for division by zero
     if(fabs(dx) > DBL_EPSILON) {
-        double x_left = 0;
-        double y_left = s->start_y - (s->start_x - x_left) * dy / dx;
+        x_left = 0;
+        y_left = s->start_y - (s->start_x - x_left) * dy / dx;
 
-        double x_right = inlink->w;
-        double y_right = s->start_y + (x_right - s->start_x) * dy / dx;
-
-        if (0 <= y_left && y_left <= inlink->h) {
-            x_start = x_left;
-            y_start = y_left;
-        }
-
-        if (0 <= y_right && y_right <= inlink->h) {
-            x_end = x_right;
-            y_end = y_right;
-        }
+        x_right = inlink->w;
+        y_right = s->start_y + (x_right - s->start_x) * dy / dx;
     }
 
     if(fabs(dy) > DBL_EPSILON) {
-        double y_top = 0;
-        double x_top = s->start_x - (s->start_y - y_top) * dx / dy;
+        y_top = 0;
+        x_top = s->start_x - (s->start_y - y_top) * dx / dy;
 
-        double y_bottom = inlink->h;
-        double x_bottom = s->start_x + (y_bottom - s->start_y) * dx / dy;
-
-        if (0 <= x_top && x_top <= inlink->w) {
-            x_start = x_top;
-            y_start = y_top;
-        }
-
-        if (0 <= x_bottom && x_bottom <= inlink->w) {
-            x_end = x_bottom;
-            y_end = y_bottom;
-        }
+        y_bottom = inlink->h;
+        x_bottom = s->start_x + (y_bottom - s->start_y) * dx / dy;
     }
 
-    // Set the start and end points
-    if(x_start != DBL_MAX && y_start != DBL_MAX && x_end != DBL_MAX && y_end != DBL_MAX) {
-        // If start point is closer to original start point, set start and end accordingly
-        if ((s->start_x - x_start) * (s->start_x - x_start) + (s->start_y - y_start) * (s->start_y - y_start) <
-            (s->start_x - x_end) * (s->start_x - x_end) + (s->start_y - y_end) * (s->start_y - y_end)) {
-            s->start_x = x_start;
-            s->start_y = y_start;
-            s->end_x = x_end;
-            s->end_y = y_end;
-        } else { // otherwise, swap start and end
-            s->start_x = x_end;
-            s->start_y = y_end;
-            s->end_x = x_start;
-            s->end_y = y_start;
+    x_coordinates[0] = x_top; x_coordinates[1] = x_bottom; x_coordinates[2] = x_right; x_coordinates[3] = x_left; 
+    y_coordinates[0] = y_top; y_coordinates[1] = y_bottom; y_coordinates[2] = y_right; y_coordinates[3] = y_left;
+    for (int i = 0; i < 4; i++)
+    {   
+        if (0 <= x_coordinates[i] && x_coordinates[i] <= inlink->w && 0 <= y_coordinates[i] && y_coordinates[i] <= inlink->h){
+            valid_coordinates[0+valid_coordinate_counter] = x_coordinates[i];   
+            valid_coordinates[1+valid_coordinate_counter] = y_coordinates[i];
+            valid_coordinate_counter += 2;
         }
-    } else {
-        s->start_x = inlink->w/2;
-        s->start_y = inlink->h;
-        s->end_x = inlink->w/2;
-        s->end_y = 0;
+    }
+    if (s->tripwire_line_angle == 0 || s->tripwire_line_angle == 180){
+        s->start_x = 0;
+        s->start_y = s->start_y;
+        s->end_x = inlink->w;
+        s->end_y = s->start_y;
+    }
+    else{
+        s->start_x = valid_coordinates[0];
+        s->start_y = valid_coordinates[1];
+        s->end_x = valid_coordinates[2];
+        s->end_y = valid_coordinates[3];
     }
 
     if (s->url)
