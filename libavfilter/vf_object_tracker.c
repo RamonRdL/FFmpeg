@@ -170,6 +170,7 @@ typedef struct Object {
     int color[3];
     int exists_counter; // how much times the objects get detected
     int stayed_in_side; // how much times the object get detected in a particular state
+    int reset_stayed_in_side;
 } Object;
 
 Object *last_frames_object[SIZE];
@@ -552,6 +553,7 @@ static Object* create_object(void)
     o->predicted_y = 0;
     o->exists_counter = 0;
     o->stayed_in_side = 0;
+    o->reset_stayed_in_side = 0;    
     return o;
 }
 
@@ -827,11 +829,16 @@ static void object_id_check(Object *obj, TDContext *s)
             if ((objects_with_id[index]->side == 2 && obj->side != 2) || (objects_with_id[index]->side == -2 && obj->side != -2))
                 obj->intersect = 1;
         }
+        if (objects_with_id[index]->reset_stayed_in_side){
+            objects_with_id[index]->stayed_in_side = 0;
+            objects_with_id[index]->reset_stayed_in_side = 0;
+        }
 
         if (objects_with_id[index]->side == obj->side)
             objects_with_id[index]->stayed_in_side++;
         else
-            objects_with_id[index]->stayed_in_side = 0;
+            objects_with_id[index]->reset_stayed_in_side = 1;
+
         obj->stayed_in_side = objects_with_id[index]->stayed_in_side;
         objects_with_id[index]->predicted_x = obj->center_x + (obj->center_x - objects_with_id[index]->center_x);
         objects_with_id[index]->predicted_y = obj->center_y + (obj->center_y - objects_with_id[index]->center_y);
