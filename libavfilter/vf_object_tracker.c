@@ -63,11 +63,12 @@
 #define PI 3.14159265358979323846
 #define SIZE 10000
 
-static const char* version = "2.06.10";
-static const char* release_date = "2023.11.17";
+static const char* version = "2.06.11";
+static const char* release_date = "2024.02.02";
 static int video_frame_count = 0;
 static int counter = 0;  // Used for history storing, to store, how many objects we have
 static int id_counter = 0;
+static int detected_onjects_number_on_frame = 0;
 static int printed_counter = 0;
 static int printed_ids[500];
 static int ids[SIZE];
@@ -132,6 +133,7 @@ typedef struct TDContext {
     double tripwire_line_angle;
     int tripwire_type;
     int std_err_text_output_enable;
+    int mask_not_intersect_frames;
 } TDContext;
 
 typedef struct Rectangle_center
@@ -225,6 +227,7 @@ static const AVOption object_tracker_options[] = {
         {"mask_i_frames", "at the I frames, the previous frame will be showed", OFFSET(mask_i_frames), AV_OPT_TYPE_INT, { .i64 = 2 }, 0, 2, FLAGS },  // 0 Dont mask at all, 1 full black frame, 2: mask as the previous frame
         {"keep_mask_on_static_image", "how many static frame will get the last moved mask.", OFFSET(keep_mask_on_image), AV_OPT_TYPE_INT, { .i64 = 1 }, 1, 1000, FLAGS },
         {"draw_object_diagonal", "draw the two diagonal for the detected object", OFFSET(draw_diagonal), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, FLAGS },
+        {"mask_not_intersect_frames", "makes every frame fully black if no intersect is detected", OFFSET(mask_not_intersect_frames), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, FLAGS },
 
         // Logging
         {"json_output_line_break", "set the output line breaks", OFFSET(line_break), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, FLAGS },
@@ -698,6 +701,7 @@ static void print_json(Object *obj, TDContext *s)
         for (int i = 0; i < printed_counter; i++) {
             if (printed_ids[i] == obj->id) {
                 crossed_event = 0;
+                obj->crossed = 0; // todo this is not the best place to deceide, and the printed variable name is not fitting perfectly
                 watcher = 1;
                 break;
             }
@@ -721,16 +725,16 @@ static void print_json(Object *obj, TDContext *s)
             }
         }else{
             if (s->std_err_text_output_enable == 0) {
-                printf(output_str,          s->filter_id, video_frame_count, id_counter, obj->id, obj->average_angle, obj->center_x, obj->center_y, obj->counter, obj->average_length,
+                printf(output_str,          s->filter_id, video_frame_count, detected_onjects_number_on_frame, obj->id, obj->average_angle, obj->center_x, obj->center_y, obj->counter, obj->average_length,
                                             obj->x_min, obj->y_min, obj->x_max, obj->y_min, obj->x_max, obj->y_max, obj->x_min, obj->y_max, crossed_event, obj->crossed, obj->stayed_in_side, obj->side, rect_position); 
             }
             if (s->std_err_text_output_enable == 1) {
-                fprintf(stderr, output_str, s->filter_id, video_frame_count, id_counter, obj->id, obj->average_angle, obj->center_x, obj->center_y, obj->counter, obj->average_length,
+                fprintf(stderr, output_str, s->filter_id, video_frame_count, detected_onjects_number_on_frame, obj->id, obj->average_angle, obj->center_x, obj->center_y, obj->counter, obj->average_length,
                                             obj->x_min, obj->y_min, obj->x_max, obj->y_min, obj->x_max, obj->y_max, obj->x_min, obj->y_max, crossed_event, obj->crossed, obj->stayed_in_side, obj->side, rect_position);
             }
             if (s->url) {
                 s->bytes += sprintf(s->buffer + s->bytes, (const char*)str, 
-                                            s->filter_id, video_frame_count, id_counter, obj->id, obj->average_angle, obj->center_x, obj->center_y, obj->counter, obj->average_length, 
+                                            s->filter_id, video_frame_count, detected_onjects_number_on_frame, obj->id, obj->average_angle, obj->center_x, obj->center_y, obj->counter, obj->average_length, 
                                             obj->x_min, obj->y_min, obj->x_max, obj->y_min, obj->x_max, obj->y_max, obj->x_min, obj->y_max, crossed_event, obj->crossed, obj->stayed_in_side, obj->side, rect_position);
                 s->buffer = (char*) realloc(s->buffer, s->bytes * sizeof(int));
             }  
@@ -1011,6 +1015,72 @@ static void add_to_object(Object* obj, int src_x, int src_y, int dst_x, int dst_
     obj->counter++;
 }
 
+/**
+ * Mask all the iamge balck what not an object
+*/
+static void mask_image(Object** object_list, int object_counter, AVFrame *frame, TDContext *s)
+{
+    int x_min = frame->width, y_min = frame->height, x_max = 0, y_max = 0;
+    int color[3] = {16, 128, 128};  // black
+    int left_out[50][4];
+    int active_objects = 0;
+    int object_in_rectangle = 0;
+    if (object_counter == 0){
+        for (int z=0; z <= y_min; z++){  // From up to down: full width, down to y_min
+            draw_line(frame, 0, z, frame->width, z, color);
+        }
+        return;
+    }
+    for (int i=0; i < object_counter; i++){
+        if (is_object_not_filtered(object_list[i], s)) {
+            left_out[active_objects][0] = object_list[i]->x_min;
+            left_out[active_objects][1] = object_list[i]->y_min;
+            left_out[active_objects][2] = object_list[i]->x_max;
+            left_out[active_objects][3] = object_list[i]->y_max;
+            active_objects++;
+            if (x_min > object_list[i]->x_min)
+                x_min = object_list[i]->x_min;
+
+            if (y_min > object_list[i]->y_min)
+                y_min = object_list[i]->y_min;
+
+            if (x_max < object_list[i]->x_max)
+                x_max = object_list[i]->x_max;
+
+            if (y_max < object_list[i]->y_max)
+                y_max = object_list[i]->y_max;
+        }
+    }
+    for (int z=0; z <= y_min; z++){  // From up to down: full width, down to y_min
+        draw_line(frame, 0, z, frame->width, z, color);
+    }
+    for (int z=y_max; z <= frame->height-1; z++){
+        draw_line(frame, 0, z, frame->width, z, color);
+    }
+    for (int z=0; z <= x_min; z++){
+        draw_line(frame, z, y_min, z, y_max, color);
+    }
+    for (int z=x_max+1; z < frame->width; z++){
+        draw_line(frame, z, y_max-1, z, y_min-1, color);
+    }
+
+    for (int x=x_min-5; x < x_max; x += 8){  // -5 to make a little big bigger window
+        for (int y = y_min-5; y < y_max; y += 8){
+            object_in_rectangle = 0;
+            for (int i = 0; i < active_objects; i++){
+                if (point_in_rectangle(x, y, left_out[i][2], left_out[i][0], left_out[i][3], left_out[i][1]))
+                    object_in_rectangle = 1;
+                }
+            if (!object_in_rectangle){
+                for (int line = 0; line < 16; line ++){
+                    draw_line(frame, x+line, y, x+line, y+16, color);
+                }
+            }
+        }
+    }
+}
+
+
 static int config_input(AVFilterLink *inlink)
 {
     double angle_rad, dx, dy;
@@ -1094,7 +1164,7 @@ static int config_input(AVFilterLink *inlink)
                     "\t\"min_mv_num\": %d,\n\t\"angle_filter\": %d,\n\t\"angle_filter_angle\": %.0lf,\n\t\"angle_filter_range\": %.0lf,\n\t\"object_marker_box\": %d,\n\t\"object_rectangle_thickness\": %d,\n\t\"object_marker_box_history\": %d,\n\t\"object_history_draw_length\": %d,\n"
                     "\t\"mask_static_image_parts\": %d,\n\t\"mask_i_frames\": %d,\n\t\"keep_mask_on_static_image\": %d,\n\t\"json_output_line_break\": %d,\n"
                     "\t\"print_only_intersect_trigger\": %d,\n\t\"print_lite_mode\": %d,\n\t\"print_rectangle_positions\": %d,\n\t\"url\": \"%s\",\n\t\"std_err_text_output_enable\": %d,\n"
-                    "\t\"parameter_summary_row\": %d,\n\t\"grid_size\": %d,\n\t\"object_survival_time\": %d,\n\t\"max_obj_distance_history\": %d,\n\t\"select_frames_where_tripwire_detected\": %d,\n\t\"select_frames_where_object_detected\": %d\n}\n";
+                    "\t\"parameter_summary_row\": %d,\n\t\"grid_size\": %d,\n\t\"object_survival_time\": %d,\n\t\"max_obj_distance_history\": %d,\n\t\"select_frames_where_tripwire_detected\": %d,\n\t\"select_frames_where_object_detected\": %d,\n\t\"mask_not_intersect_frames\": %d\n}\n";
 
         if (!s->line_break) {
             replace(parameters, (char *)"{\n\t", (char *)"{");
@@ -1109,7 +1179,7 @@ static int config_input(AVFilterLink *inlink)
             s->min_mv, s->angle_enabled, s->angle, s->angle_range, s->object_marker_box, s->thickness, s->object_marker_box_history, s->detection_threshold,
             s->mask_static_areas, s->mask_i_frames, s->keep_mask_on_image, s->line_break,
             s->print_only_intersect_trigger, s->print_lite_mode, s->print_rectangles_position, s->url, s->std_err_text_output_enable,
-            s->parameters, s->grid_size, s->obj_survival_time, s->max_obj_distance_history, s->select_frames_where_tripwire, s->scene_static_frames);
+            s->parameters, s->grid_size, s->obj_survival_time, s->max_obj_distance_history, s->select_frames_where_tripwire, s->scene_static_frames, s->mask_not_intersect_frames);
 
             // Reallocating the amount of memory the buffer needs
             s->buffer = (char*)realloc(s->buffer, s->bytes * sizeof(int));
@@ -1121,14 +1191,14 @@ static int config_input(AVFilterLink *inlink)
             s->min_mv, s->angle_enabled, s->angle, s->angle_range, s->object_marker_box, s->thickness, s->object_marker_box_history, s->detection_threshold,
             s->mask_static_areas, s->mask_i_frames, s->keep_mask_on_image, s->line_break,
             s->print_only_intersect_trigger, s->print_lite_mode, s->print_rectangles_position, s->url, s->std_err_text_output_enable,
-            s->parameters, s->grid_size, s->obj_survival_time, s->max_obj_distance_history, s->select_frames_where_tripwire, s->scene_static_frames);
+            s->parameters, s->grid_size, s->obj_survival_time, s->max_obj_distance_history, s->select_frames_where_tripwire, s->scene_static_frames, s->mask_not_intersect_frames);
         }else{
             printf(parameters, version, release_date, s->tripwire, s->tripwire_type, s->start_x, s->start_y, s->tripwire_line_angle, s->tripwire_marker_line,
             s->max_distance, s->min_mv_length, s->max_angle_diff, s->crop_x, s->crop_y, s->crop_width, s->crop_height, s->resize_to_crop, s->black_filter,
             s->min_mv, s->angle_enabled, s->angle, s->angle_range, s->object_marker_box, s->thickness, s->object_marker_box_history, s->detection_threshold,
             s->mask_static_areas, s->mask_i_frames, s->keep_mask_on_image, s->line_break,
             s->print_only_intersect_trigger, s->print_lite_mode, s->print_rectangles_position, s->url, s->std_err_text_output_enable,
-            s->parameters, s->grid_size, s->obj_survival_time, s->max_obj_distance_history, s->select_frames_where_tripwire, s->scene_static_frames);
+            s->parameters, s->grid_size, s->obj_survival_time, s->max_obj_distance_history, s->select_frames_where_tripwire, s->scene_static_frames, s->mask_not_intersect_frames);
 
         }
     }
@@ -1280,9 +1350,10 @@ static void merge_objects(Object** objects, TDContext *s, int *ptr_object_counte
             free(objects[i]);
             continue;
         }
-        
+        if (!is_object_not_filtered(objects[i], s))  // filter objects
+            continue;
+
         new_objects[object_counter] = create_object();
-        
         copy_object_data(new_objects[object_counter], objects[i]);
         free(objects[i]);
         object_counter++;
@@ -1334,66 +1405,6 @@ static void find_motion_vector_image_size(AVFrameSideData *motion_vector_table, 
     s->resize_ratio_y = (double) frame_height / motion_vector_image_size_y;
 }
 
-/**
- * Mask all the iamge balck what not an object
-*/
-static void mask_image(Object** object_list, int object_counter, AVFrame *frame, TDContext *s)
-{
-    int x_min = frame->width, y_min = frame->height, x_max = 0, y_max = 0;
-    int color[3] = {16, 128, 128};  // black
-    int left_out[50][4];
-    int active_objects = 0;
-    int object_in_rectangle = 0;
-    for (int i=0; i < object_counter; i++){
-        if (is_object_not_filtered(object_list[i], s)) {
-            left_out[active_objects][0] = object_list[i]->x_min;
-            left_out[active_objects][1] = object_list[i]->y_min;
-            left_out[active_objects][2] = object_list[i]->x_max;
-            left_out[active_objects][3] = object_list[i]->y_max;
-            active_objects++;
-            if (x_min > object_list[i]->x_min)
-                x_min = object_list[i]->x_min;
-
-            if (y_min > object_list[i]->y_min)
-                y_min = object_list[i]->y_min;
-
-            if (x_max < object_list[i]->x_max)
-                x_max = object_list[i]->x_max;
-
-            if (y_max < object_list[i]->y_max)
-                y_max = object_list[i]->y_max;
-        }
-    }
-    for (int z=0; z <= y_min; z++){  // From up to down: full width, down to y_min
-        draw_line(frame, 0, z, frame->width, z, color);
-    }
-    for (int z=y_max; z <= frame->height-1; z++){
-        draw_line(frame, 0, z, frame->width, z, color);
-    }
-    for (int z=0; z <= x_min; z++){
-        draw_line(frame, z, y_min, z, y_max, color);
-    }
-    for (int z=x_max+1; z < frame->width; z++){
-        draw_line(frame, z, y_max-1, z, y_min-1, color);
-    }
-    
-    if (active_objects <= 1)  // there is only one or 0 object:
-        return;
-    for (int x=x_min-5; x < x_max; x += 8){  // -5 to make a little big bigger window
-        for (int y = y_min-5; y < y_max; y += 8){
-            object_in_rectangle = 0;
-            for (int i = 0; i < active_objects; i++){
-                if (point_in_rectangle(x, y, left_out[i][2], left_out[i][0], left_out[i][3], left_out[i][1]))
-                    object_in_rectangle = 1;
-                }
-            if (!object_in_rectangle){
-                for (int line = 0; line < 16; line ++){
-                    draw_line(frame, x+line, y, x+line, y+16, color);
-                }
-            }
-        }
-    }
-}
 
 /**
  * If the mask_static_image_parts is turned on, and we want to keep the mask for many frames after no objects get detected, this funciton will count and keep the mask on.
@@ -1438,20 +1449,24 @@ static void calculate_result_data_to_object(Object *obj)
 
 static int filter_frame(AVFilterLink *inlink, AVFrame *frame) {
     AVFilterContext *ctx = inlink->dst;
+    AVFrameSideData *motion_vector_table;
     TDContext *s = ctx->priv;
     AVFilterLink *outlink = ctx->outputs[0];
-    int i = 0;
+    Object *objects[5000];
     uint8_t *ptr;
+    double length, angle;
+    int i = 0;
     int mv_processed, ret;
     int obj_counter = 0;
-    double length, angle;
     int color[3] = {255, 0, 0};
     int active_frame = 0;
-    Object *objects[5000];
-    AVFrameSideData *motion_vector_table;
+    int intersect_frame = 0;
+
+    detected_onjects_number_on_frame = 0;
     video_frame_count++;
     tripwire_event_detected_on_the_frame = 0;
     motion_vector_table = av_frame_get_side_data(frame, AV_FRAME_DATA_MOTION_VECTORS); // Get the mvs from the frame
+
     if (motion_vector_table) {  // If the frame has mvs.
         int mv_table_size = motion_vector_table->size / sizeof(AVMotionVector);
         AVMotionVector *mvs = (AVMotionVector *)motion_vector_table->data;
@@ -1541,10 +1556,10 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *frame) {
             av_frame_free(&frame);
             return 0;
         }
-        if (s->mask_static_areas){
-            if (s->mask_i_frames == 2)  // mask as the previous frame
+        if (s->mask_static_areas || s->mask_not_intersect_frames){
+            if (s->mask_i_frames == 2 && !s->mask_not_intersect_frames)  // mask as the previous frame
                 keep_mask_on_image(last_detected_objects, last_detected_objects_counter, frame, s);
-            if (s->mask_i_frames == 1)  // a full black image
+            if (s->mask_i_frames == 1 || s->mask_not_intersect_frames)  // a full black image
                 mask_image(objects, 0, frame, s);
             // if (s->mask_i_frames == 0)  // Dont mask the i frame, returns the original frame
         }
@@ -1559,13 +1574,19 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *frame) {
         }
     }
     merge_objects(objects, s, &obj_counter);
+    detected_onjects_number_on_frame = obj_counter;
     for (int i = 0; i < obj_counter; i++) {
-        if (is_object_not_filtered(objects[i], s)) {
-            active_frame = 1;
-            check_object(objects[i], s, frame);
+        active_frame = 1;
+        check_object(objects[i], s, frame);
+        if (objects[i]->crossed != 0){
+            intersect_frame = 1;
+            break;
         }
     }
-    if (s->mask_static_areas){
+    if (s->mask_static_areas || s->mask_not_intersect_frames){
+        if (s->mask_not_intersect_frames && !intersect_frame){
+            mask_image(objects, 0, frame, s);
+        }
         if (active_frame){
             last_mask_repeated_for = 0;
             mask_image(objects, obj_counter, frame, s);

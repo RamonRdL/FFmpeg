@@ -56,3 +56,11 @@
     vf_object_tracker V 02.06.10
          s->tripwire_type paramétert kiírjuk
          Javított első megjelenésre tripwire cross
+		 
+2023.02.02 Sz Ramon
+	ffmpeg/6.1 -> Ffmpeg/master
+	
+	vf_object_tracker V 02.06.11
+		+ mask_not_intersect_frames
+		mask image optimalizálása teljesen fekete kép esetén
+		Logban a detected_object_number az azon a framen detektált objektek számát jelzi
