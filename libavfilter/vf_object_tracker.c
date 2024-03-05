@@ -1351,6 +1351,7 @@ static void merge_objects(Object** objects, TDContext *s, int *ptr_object_counte
             continue;
         }
         if (!is_object_not_filtered(objects[i], s))  // filter objects
+            free(objects[i]);
             continue;
 
         new_objects[object_counter] = create_object();
