@@ -63,8 +63,8 @@
 #define PI 3.14159265358979323846
 #define SIZE 10000
 
-static const char* version = "2.06.11";
-static const char* release_date = "2024.02.02";
+static const char* version = "2.06.12";
+static const char* release_date = "2024.03.05";
 static int video_frame_count = 0;
 static int counter = 0;  // Used for history storing, to store, how many objects we have
 static int id_counter = 0;
