@@ -177,9 +177,6 @@ static int sps_derive(VVCSPS *sps, void *log_ctx)
     int ret;
     const H266RawSPS *r = sps->r;
 
-    sps->width  = r->sps_pic_width_max_in_luma_samples;
-    sps->height = r->sps_pic_height_max_in_luma_samples;
-
     ret = sps_bit_depth(sps, log_ctx);
     if (ret < 0)
         return ret;
@@ -645,9 +642,9 @@ static int lmcs_derive_lut(VVCLMCS *lmcs, const H266RawAPS *rlmcs, const H266Raw
         const uint16_t fwd_sample = lmcs_derive_lut_sample(sample, lmcs->pivot,
             input_pivot, scale_coeff, idx_y, max);
         if (bit_depth > 8)
-            ((uint16_t *)lmcs->fwd_lut)[sample] = fwd_sample;
+            lmcs->fwd_lut.u16[sample] = fwd_sample;
         else
-            lmcs->fwd_lut[sample] = fwd_sample;
+            lmcs->fwd_lut.u8 [sample] = fwd_sample;
 
     }
 
@@ -655,16 +652,16 @@ static int lmcs_derive_lut(VVCLMCS *lmcs, const H266RawAPS *rlmcs, const H266Raw
     i = lmcs->min_bin_idx;
     for (uint16_t sample = 0; sample < max; sample++) {
         uint16_t inv_sample;
-        while (sample >= lmcs->pivot[i + 1] && i <= lmcs->max_bin_idx)
+        while (i <= lmcs->max_bin_idx && sample >= lmcs->pivot[i + 1])
             i++;
 
         inv_sample = lmcs_derive_lut_sample(sample, input_pivot, lmcs->pivot,
             inv_scale_coeff, i, max);
 
         if (bit_depth > 8)
-            ((uint16_t *)lmcs->inv_lut)[sample] = inv_sample;
+            lmcs->inv_lut.u16[sample] = inv_sample;
         else
-            lmcs->inv_lut[sample] = inv_sample;
+            lmcs->inv_lut.u8 [sample] = inv_sample;
     }
 
     return 0;
@@ -998,6 +995,39 @@ int ff_vvc_decode_aps(VVCParamSets *ps, const CodedBitstreamUnit *unit)
     return ret;
 }
 
+static int sh_alf_aps(const VVCSH *sh, const VVCFrameParamSets *fps)
+{
+    if (!sh->r->sh_alf_enabled_flag)
+        return 0;
+
+    for (int i = 0; i < sh->r->sh_num_alf_aps_ids_luma; i++) {
+        const VVCALF *alf_aps_luma = fps->alf_list[sh->r->sh_alf_aps_id_luma[i]];
+        if (!alf_aps_luma)
+            return AVERROR_INVALIDDATA;
+    }
+
+    if (sh->r->sh_alf_cb_enabled_flag || sh->r->sh_alf_cr_enabled_flag) {
+        const VVCALF *alf_aps_chroma = fps->alf_list[sh->r->sh_alf_aps_id_chroma];
+        if (!alf_aps_chroma)
+            return AVERROR_INVALIDDATA;
+    }
+
+    if (fps->sps->r->sps_ccalf_enabled_flag) {
+        if (sh->r->sh_alf_cc_cb_enabled_flag) {
+            const VVCALF *alf_aps_cc_cr = fps->alf_list[sh->r->sh_alf_cc_cb_aps_id];
+            if (!alf_aps_cc_cr)
+                return AVERROR_INVALIDDATA;
+        }
+        if (sh->r->sh_alf_cc_cr_enabled_flag) {
+            const VVCALF *alf_aps_cc_cr = fps->alf_list[sh->r->sh_alf_cc_cr_aps_id];
+            if (!alf_aps_cc_cr)
+                return AVERROR_INVALIDDATA;
+        }
+    }
+
+    return 0;
+}
+
 static void sh_slice_address(VVCSH *sh, const H266RawSPS *sps, const VVCPPS *pps)
 {
     const int slice_address     = sh->r->sh_slice_address;
@@ -1116,8 +1146,12 @@ static int sh_derive(VVCSH *sh, const VVCFrameParamSets *fps)
     const H266RawSPS *sps           = fps->sps->r;
     const H266RawPPS *pps           = fps->pps->r;
     const H266RawPictureHeader *ph  = fps->ph.r;
+    int ret;
 
     sh_slice_address(sh, sps, fps->pps);
+    ret = sh_alf_aps(sh, fps);
+    if (ret < 0)
+        return ret;
     sh_inter(sh, sps, pps);
     sh_qp_y(sh, pps, ph);
     sh_deblock_offsets(sh);

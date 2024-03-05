@@ -187,12 +187,16 @@ struct AVCodecParameters;
  * @{
  */
 
+#if FF_API_BUFFER_MIN_SIZE
 /**
  * @ingroup lavc_encoding
  * minimum encoding buffer size
  * Used to avoid some checks during header writing.
+ * @deprecated Unused: avcodec_receive_packet() does not work
+ *             with preallocated packet buffers.
  */
 #define AV_INPUT_BUFFER_MIN_SIZE 16384
+#endif
 
 /**
  * @ingroup lavc_encoding
@@ -1823,15 +1827,15 @@ typedef struct AVCodecContext {
      */
     const struct AVCodecDescriptor *codec_descriptor;
 
-    /**
+    /*
      * Current statistics for PTS correction.
      * - decoding: maintained and used by libavcodec, not intended to be used by user apps
      * - encoding: unused
      */
-    int64_t pts_correction_num_faulty_pts; /// Number of incorrect PTS values so far
-    int64_t pts_correction_num_faulty_dts; /// Number of incorrect DTS values so far
-    int64_t pts_correction_last_pts;       /// PTS of the last frame
-    int64_t pts_correction_last_dts;       /// DTS of the last frame
+    int64_t pts_correction_num_faulty_pts; ///< Number of incorrect PTS values so far
+    int64_t pts_correction_num_faulty_dts; ///< Number of incorrect DTS values so far
+    int64_t pts_correction_last_pts;       ///< PTS of the last frame
+    int64_t pts_correction_last_dts;       ///< DTS of the last frame
 
     /**
      * Character encoding of the input subtitles file.
@@ -2411,6 +2415,7 @@ int avcodec_parameters_to_context(AVCodecContext *codec,
  */
 int avcodec_open2(AVCodecContext *avctx, const AVCodec *codec, AVDictionary **options);
 
+#if FF_API_AVCODEC_CLOSE
 /**
  * Close a given AVCodecContext and free all the data associated with it
  * (but not the AVCodecContext itself).
@@ -2419,12 +2424,14 @@ int avcodec_open2(AVCodecContext *avctx, const AVCodec *codec, AVDictionary **op
  * the codec-specific data allocated in avcodec_alloc_context3() with a non-NULL
  * codec. Subsequent calls will do nothing.
  *
- * @note Do not use this function. Use avcodec_free_context() to destroy a
+ * @deprecated Do not use this function. Use avcodec_free_context() to destroy a
  * codec context (either open or closed). Opening and closing a codec context
  * multiple times is not supported anymore -- use multiple codec contexts
  * instead.
  */
+attribute_deprecated
 int avcodec_close(AVCodecContext *avctx);
+#endif
 
 /**
  * Free all allocated data in the given subtitle struct.

@@ -485,9 +485,8 @@ static int ost_get_filters(const OptionsContext *o, AVFormatContext *oc,
 
 static int parse_matrix_coeffs(void *logctx, uint16_t *dest, const char *str)
 {
-    int i;
     const char *p = str;
-    for (i = 0;; i++) {
+    for (int i = 0;; i++) {
         dest[i] = atoi(p);
         if (i == 63)
             break;
@@ -707,13 +706,6 @@ static int new_stream_video(Muxer *mux, const OptionsContext *o,
         }
         video_enc->rc_override_count = i;
 
-#if FFMPEG_OPT_PSNR
-        if (do_psnr) {
-            av_log(ost, AV_LOG_WARNING, "The -psnr option is deprecated, use -flags +psnr\n");
-            video_enc->flags|= AV_CODEC_FLAG_PSNR;
-        }
-#endif
-
         /* two pass mode */
         MATCH_PER_STREAM_OPT(pass, i, do_pass, oc, st);
         if (do_pass) {
@@ -833,10 +825,7 @@ static int new_stream_audio(Muxer *mux, const OptionsContext *o,
                             OutputStream *ost)
 {
     AVFormatContext *oc = mux->fc;
-    AVStream *st;
-    int ret = 0;
-
-    st  = ost->st;
+    AVStream *st = ost->st;
 
     if (ost->enc_ctx) {
         AVCodecContext *audio_enc = ost->enc_ctx;
@@ -882,37 +871,6 @@ static int new_stream_audio(Muxer *mux, const OptionsContext *o,
 
         MATCH_PER_STREAM_OPT(apad, str, ost->apad, oc, st);
         ost->apad = av_strdup(ost->apad);
-
-#if FFMPEG_OPT_MAP_CHANNEL
-        /* check for channel mapping for this audio stream */
-        for (int n = 0; n < o->nb_audio_channel_maps; n++) {
-            AudioChannelMap *map = &o->audio_channel_maps[n];
-            if ((map->ofile_idx   == -1 || ost->file->index == map->ofile_idx) &&
-                (map->ostream_idx == -1 || ost->st->index  == map->ostream_idx)) {
-                InputStream *ist;
-
-                if (map->channel_idx == -1) {
-                    ist = NULL;
-                } else if (!ost->ist) {
-                    av_log(ost, AV_LOG_FATAL, "Cannot determine input stream for channel mapping %d.%d\n",
-                           ost->file->index, ost->st->index);
-                    continue;
-                } else {
-                    ist = ost->ist;
-                }
-
-                if (!ist || (ist->file->index == map->file_idx && ist->index == map->stream_idx)) {
-                    ret = av_reallocp_array(&ost->audio_channels_map,
-                                            ost->audio_channels_mapped + 1,
-                                            sizeof(*ost->audio_channels_map));
-                    if (ret < 0)
-                        return ret;
-
-                    ost->audio_channels_map[ost->audio_channels_mapped++] = map->channel_idx;
-                }
-            }
-        }
-#endif
     }
 
     return 0;
@@ -1050,17 +1008,6 @@ static int streamcopy_init(const Muxer *mux, OutputStream *ost)
         memcpy(sd_dst->data, sd_src->data, sd_src->size);
     }
 
-#if FFMPEG_ROTATION_METADATA
-    if (ost->rotate_overridden) {
-        AVPacketSideData *sd = av_packet_side_data_new(&ost->st->codecpar->coded_side_data,
-                                                       &ost->st->codecpar->nb_coded_side_data,
-                                                       AV_PKT_DATA_DISPLAYMATRIX,
-                                                       sizeof(int32_t) * 9, 0);
-        if (sd)
-            av_display_rotation_set((int32_t *)sd->data, -ost->rotate_override_value);
-    }
-#endif
-
     switch (par->codec_type) {
     case AVMEDIA_TYPE_AUDIO:
         if ((par->block_align == 1 || par->block_align == 1152 || par->block_align == 576) &&
@@ -1108,7 +1055,6 @@ static int ost_add(Muxer *mux, const OptionsContext *o, enum AVMediaType type,
     const char *bsfs = NULL, *time_base = NULL;
     char *filters = NULL, *next, *codec_tag = NULL;
     double qscale = -1;
-    int i;
 
     st = avformat_new_stream(oc, NULL);
     if (!st)
@@ -1350,7 +1296,7 @@ static int ost_add(Muxer *mux, const OptionsContext *o, enum AVMediaType type,
 
     ms->max_frames = INT64_MAX;
     MATCH_PER_STREAM_OPT(max_frames, i64, ms->max_frames, oc, st);
-    for (i = 0; i < o->max_frames.nb_opt; i++) {
+    for (int i = 0; i < o->max_frames.nb_opt; i++) {
         char *p = o->max_frames.opt[i].specifier;
         if (!*p && type != AVMEDIA_TYPE_VIDEO) {
             av_log(ost, AV_LOG_WARNING, "Applying unspecific -frames to non video streams, maybe you meant -vframes ?\n");
@@ -1741,6 +1687,7 @@ static int of_add_attachments(Muxer *mux, const OptionsContext *o)
     for (int i = 0; i < o->nb_attachments; i++) {
         AVIOContext *pb;
         uint8_t *attachment;
+        char *attachment_filename;
         const char *p;
         int64_t len;
 
@@ -1788,13 +1735,20 @@ read_fail:
         av_log(mux, AV_LOG_VERBOSE, "Creating attachment stream from file %s\n",
                o->attachments[i]);
 
+        attachment_filename = av_strdup(o->attachments[i]);
+        if (!attachment_filename) {
+            av_free(attachment);
+            return AVERROR(ENOMEM);
+        }
+
         err = ost_add(mux, o, AVMEDIA_TYPE_ATTACHMENT, NULL, NULL, &ost);
         if (err < 0) {
+            av_free(attachment_filename);
             av_freep(&attachment);
             return err;
         }
 
-        ost->attachment_filename       = o->attachments[i];
+        ost->attachment_filename       = attachment_filename;
         ost->par_in->extradata         = attachment;
         ost->par_in->extradata_size    = len;
 
@@ -2215,7 +2169,7 @@ static int of_parse_group_token(Muxer *mux, const char *token, char *ptr)
     const AVDictionaryEntry *e;
     const AVOption opts[] = {
         { "type", "Set group type", offsetof(AVStreamGroup, type), AV_OPT_TYPE_INT,
-                { .i64 = 0 }, 0, INT_MAX, AV_OPT_FLAG_ENCODING_PARAM, "type" },
+                { .i64 = 0 }, 0, INT_MAX, AV_OPT_FLAG_ENCODING_PARAM, .unit = "type" },
             { "iamf_audio_element",    NULL, 0, AV_OPT_TYPE_CONST,
                 { .i64 = AV_STREAM_GROUP_PARAMS_IAMF_AUDIO_ELEMENT },    .unit = "type" },
             { "iamf_mix_presentation", NULL, 0, AV_OPT_TYPE_CONST,
@@ -2473,28 +2427,8 @@ static int of_add_metadata(OutputFile *of, AVFormatContext *oc,
 
         if (type == 's') {
             for (int j = 0; j < oc->nb_streams; j++) {
-                OutputStream *ost = of->streams[j];
                 if ((ret = check_stream_specifier(oc, oc->streams[j], stream_spec)) > 0) {
-#if FFMPEG_ROTATION_METADATA
-                    if (!strcmp(o->metadata.opt[i].u.str, "rotate")) {
-                        char *tail;
-                        double theta = av_strtod(val, &tail);
-                        if (!*tail) {
-                            ost->rotate_overridden = 1;
-                            ost->rotate_override_value = theta;
-                        }
-
-                        av_log(ost, AV_LOG_WARNING,
-                               "Conversion of a 'rotate' metadata key to a "
-                               "proper display matrix rotation is deprecated. "
-                               "See -display_rotation for setting rotation "
-                               "instead.");
-                    } else {
-#endif
-                        av_dict_set(&oc->streams[j]->metadata, o->metadata.opt[i].u.str, *val ? val : NULL, 0);
-#if FFMPEG_ROTATION_METADATA
-                    }
-#endif
+                    av_dict_set(&oc->streams[j]->metadata, o->metadata.opt[i].u.str, *val ? val : NULL, 0);
                 } else if (ret < 0)
                     return ret;
             }
@@ -2533,14 +2467,13 @@ static int copy_chapters(InputFile *ifile, OutputFile *ofile, AVFormatContext *o
 {
     AVFormatContext *is = ifile->ctx;
     AVChapter **tmp;
-    int i;
 
     tmp = av_realloc_f(os->chapters, is->nb_chapters + os->nb_chapters, sizeof(*os->chapters));
     if (!tmp)
         return AVERROR(ENOMEM);
     os->chapters = tmp;
 
-    for (i = 0; i < is->nb_chapters; i++) {
+    for (int i = 0; i < is->nb_chapters; i++) {
         AVChapter *in_ch = is->chapters[i], *out_ch;
         int64_t start_time = (ofile->start_time == AV_NOPTS_VALUE) ? 0 : ofile->start_time;
         int64_t ts_off   = av_rescale_q(start_time - ifile->ts_offset,
