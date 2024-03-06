@@ -63,8 +63,8 @@
 #define PI 3.14159265358979323846
 #define SIZE 10000
 
-static const char* version = "2.06.12";
-static const char* release_date = "2024.03.05";
+static const char* version = "2.06.13";
+static const char* release_date = "2024.03.06";
 static int video_frame_count = 0;
 static int counter = 0;  // Used for history storing, to store, how many objects we have
 static int id_counter = 0;
@@ -1350,10 +1350,11 @@ static void merge_objects(Object** objects, TDContext *s, int *ptr_object_counte
             free(objects[i]);
             continue;
         }
-        if (!is_object_not_filtered(objects[i], s))  // filter objects
+        if (!is_object_not_filtered(objects[i], s)){  // filter objects
             free(objects[i]);
             continue;
-
+        }
+        
         new_objects[object_counter] = create_object();
         copy_object_data(new_objects[object_counter], objects[i]);
         free(objects[i]);
