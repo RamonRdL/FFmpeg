@@ -68,40 +68,19 @@
 #include <conio.h>
 #endif
 
-#include "libavutil/avassert.h"
-#include "libavutil/avstring.h"
 #include "libavutil/bprint.h"
-#include "libavutil/channel_layout.h"
 #include "libavutil/dict.h"
-#include "libavutil/display.h"
-#include "libavutil/fifo.h"
-#include "libavutil/hwcontext.h"
-#include "libavutil/imgutils.h"
-#include "libavutil/intreadwrite.h"
-#include "libavutil/libm.h"
-#include "libavutil/mathematics.h"
-#include "libavutil/opt.h"
-#include "libavutil/parseutils.h"
-#include "libavutil/pixdesc.h"
-#include "libavutil/samplefmt.h"
-#include "libavutil/thread.h"
-#include "libavutil/threadmessage.h"
+#include "libavutil/mem.h"
 #include "libavutil/time.h"
-#include "libavutil/timestamp.h"
-
-#include "libavcodec/version.h"
 
 #include "libavformat/avformat.h"
 
 #include "libavdevice/avdevice.h"
 
-#include "libswresample/swresample.h"
-
 #include "cmdutils.h"
 #include "ffmpeg.h"
 #include "ffmpeg_sched.h"
 #include "ffmpeg_utils.h"
-#include "sync_queue.h"
 
 const char program_name[] = "ffmpeg";
 const int program_birth_year = 2000;
@@ -131,6 +110,9 @@ int         nb_output_files   = 0;
 FilterGraph **filtergraphs;
 int        nb_filtergraphs;
 
+Decoder     **decoders;
+int        nb_decoders;
+
 #if HAVE_TERMIOS_H
 
 /* init terminal so that we can grab keys */
@@ -154,7 +136,7 @@ void term_exit(void)
 
 static volatile int received_sigterm = 0;
 static volatile int received_nb_signals = 0;
-static atomic_int transcode_init_done = ATOMIC_VAR_INIT(0);
+static atomic_int transcode_init_done = 0;
 static volatile int ffmpeg_exited = 0;
 static int64_t copy_ts_first_pts = AV_NOPTS_VALUE;
 
@@ -340,6 +322,10 @@ static void ffmpeg_cleanup(int ret)
     for (int i = 0; i < nb_input_files; i++)
         ifile_close(&input_files[i]);
 
+    for (int i = 0; i < nb_decoders; i++)
+        dec_free(&decoders[i]);
+    av_freep(&decoders);
+
     if (vstats_file) {
         if (fclose(vstats_file))
             av_log(NULL, AV_LOG_ERROR,
@@ -402,23 +388,63 @@ InputStream *ist_iter(InputStream *prev)
     return NULL;
 }
 
+static void frame_data_free(void *opaque, uint8_t *data)
+{
+    FrameData *fd = (FrameData *)data;
+
+    avcodec_parameters_free(&fd->par_enc);
+
+    av_free(data);
+}
+
 static int frame_data_ensure(AVBufferRef **dst, int writable)
 {
-    if (!*dst) {
+    AVBufferRef *src = *dst;
+
+    if (!src || (writable && !av_buffer_is_writable(src))) {
         FrameData *fd;
 
-        *dst = av_buffer_allocz(sizeof(*fd));
-        if (!*dst)
+        fd = av_mallocz(sizeof(*fd));
+        if (!fd)
             return AVERROR(ENOMEM);
-        fd = (FrameData*)((*dst)->data);
 
-        fd->dec.frame_num = UINT64_MAX;
-        fd->dec.pts       = AV_NOPTS_VALUE;
+        *dst = av_buffer_create((uint8_t *)fd, sizeof(*fd),
+                                frame_data_free, NULL, 0);
+        if (!*dst) {
+            av_buffer_unref(&src);
+            av_freep(&fd);
+            return AVERROR(ENOMEM);
+        }
 
-        for (unsigned i = 0; i < FF_ARRAY_ELEMS(fd->wallclock); i++)
-            fd->wallclock[i] = INT64_MIN;
-    } else if (writable)
-        return av_buffer_make_writable(dst);
+        if (src) {
+            const FrameData *fd_src = (const FrameData *)src->data;
+
+            memcpy(fd, fd_src, sizeof(*fd));
+            fd->par_enc = NULL;
+
+            if (fd_src->par_enc) {
+                int ret = 0;
+
+                fd->par_enc = avcodec_parameters_alloc();
+                ret = fd->par_enc ?
+                      avcodec_parameters_copy(fd->par_enc, fd_src->par_enc) :
+                      AVERROR(ENOMEM);
+                if (ret < 0) {
+                    av_buffer_unref(dst);
+                    av_buffer_unref(&src);
+                    return ret;
+                }
+            }
+
+            av_buffer_unref(&src);
+        } else {
+            fd->dec.frame_num = UINT64_MAX;
+            fd->dec.pts       = AV_NOPTS_VALUE;
+
+            for (unsigned i = 0; i < FF_ARRAY_ELEMS(fd->wallclock); i++)
+                fd->wallclock[i] = INT64_MIN;
+        }
+    }
 
     return 0;
 }

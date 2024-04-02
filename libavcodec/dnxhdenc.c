@@ -25,6 +25,7 @@
 
 #include "libavutil/attributes.h"
 #include "libavutil/internal.h"
+#include "libavutil/mem.h"
 #include "libavutil/mem_internal.h"
 #include "libavutil/opt.h"
 
@@ -78,7 +79,7 @@ static const AVClass dnxhd_class = {
     .version    = LIBAVUTIL_VERSION_INT,
 };
 
-static void dnxhd_8bit_get_pixels_8x4_sym(int16_t *av_restrict block,
+static void dnxhd_8bit_get_pixels_8x4_sym(int16_t *restrict block,
                                           const uint8_t *pixels,
                                           ptrdiff_t line_size)
 {
@@ -102,7 +103,7 @@ static void dnxhd_8bit_get_pixels_8x4_sym(int16_t *av_restrict block,
 }
 
 static av_always_inline
-void dnxhd_10bit_get_pixels_8x4_sym(int16_t *av_restrict block,
+void dnxhd_10bit_get_pixels_8x4_sym(int16_t *restrict block,
                                     const uint8_t *pixels,
                                     ptrdiff_t line_size)
 {

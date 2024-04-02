@@ -1,7 +1,7 @@
 Entries are sorted chronologically from oldest to youngest within each release,
 releases are sorted from youngest to oldest.
 
-version <next>:
+version 7.0:
 - DXV DXT1 encoder
 - LEAD MCMP decoder
 - EVC decoding using external library libxevd
@@ -30,6 +30,14 @@ version <next>:
 - Change the default bitrate control method from VBR to CQP for QSV encoders.
 - removed deprecated ffmpeg CLI options -psnr and -map_channel
 - DVD-Video demuxer, powered by libdvdnav and libdvdread
+- ffprobe -show_stream_groups option
+- ffprobe (with -export_side_data film_grain) now prints film grain metadata
+- AEA muxer
+- ffmpeg CLI loopback decoders
+- Support PacketTypeMetadata of PacketType in enhanced flv format
+- ffplay with hwaccel decoding support (depends on vulkan renderer via libplacebo)
+- dnn filter libtorch backend
+- Android content URIs protocol
 
 
 version 6.1:

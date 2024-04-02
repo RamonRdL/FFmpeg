@@ -33,6 +33,7 @@
 #include "libavutil/channel_layout.h"
 #include "libavutil/libm.h"
 #include "libavutil/float_dsp.h"
+#include "libavutil/mem.h"
 #include "libavutil/opt.h"
 #include "avcodec.h"
 #include "codec_internal.h"
@@ -1382,10 +1383,6 @@ static av_cold int aac_encode_init(AVCodecContext *avctx)
     s->random_state = 0x1f2e3d4c;
 
     ff_aacenc_dsp_init(&s->aacdsp);
-
-#if HAVE_MIPSDSP
-    ff_aac_coder_init_mips(s);
-#endif
 
     ff_af_queue_init(avctx, &s->afq);
 

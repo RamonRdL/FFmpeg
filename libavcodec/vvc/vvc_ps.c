@@ -20,8 +20,10 @@
  * License along with FFmpeg; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
+
 #include "libavcodec/cbs_h266.h"
-#include "libavutil/imgutils.h"
+#include "libavutil/mem.h"
+#include "libavutil/pixdesc.h"
 #include "libavcodec/refstruct.h"
 #include "vvc_data.h"
 #include "vvc_ps.h"
@@ -742,7 +744,7 @@ static int decode_frame_ps(VVCFrameParamSets *fps, const VVCParamSets *ps,
 static void decode_recovery_flag(VVCContext *s)
 {
     if (IS_IDR(s))
-        s->no_output_before_recovery_flag = 0;
+        s->no_output_before_recovery_flag = 1;
     else if (IS_CRA(s) || IS_GDR(s))
         s->no_output_before_recovery_flag = s->last_eos;
 }

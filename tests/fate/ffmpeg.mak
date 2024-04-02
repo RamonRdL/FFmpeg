@@ -62,6 +62,7 @@ fate-sub2video: CMD = framecrc -auto_conversion_filters \
 FATE_SAMPLES_FFMPEG-$(call FRAMECRC, VOBSUB, DVDSUB, SCALE_FILTER) += fate-sub2video_basic
 fate-sub2video_basic: CMD = framecrc -auto_conversion_filters \
   -i $(TARGET_SAMPLES)/sub/vobsub.idx \
+  -pix_fmt bgra \
   -fps_mode passthrough -copyts \
   -filter_complex "sws_flags=+accurate_rnd+bitexact\;[0:s:0]scale" \
   -c:v rawvideo -threads 1
@@ -71,6 +72,7 @@ fate-sub2video_basic: CMD = framecrc -auto_conversion_filters \
 FATE_SAMPLES_FFMPEG-$(call FRAMECRC, SUP, PGSSUB, SCALE_FILTER RAWVIDEO_ENCODER) += fate-sub2video_time_limited
 fate-sub2video_time_limited: CMD = framecrc -auto_conversion_filters \
   -i $(TARGET_SAMPLES)/sub/pgs_sub.sup \
+  -pix_fmt bgra \
   -fps_mode passthrough -copyts \
   -t 15 \
   -filter_complex "sws_flags=+accurate_rnd+bitexact\;[0:s:0]scale" \
@@ -129,7 +131,7 @@ fate-ffmpeg-fix_sub_duration_heartbeat: CMD = fmtstdout srt -fix_sub_duration \
 
 # FIXME: the integer AAC decoder does not produce the same output on all platforms
 # so until that is fixed we use the volume filter to silence the data
-FATE_SAMPLES_FFMPEG-$(call FRAMECRC, MATROSKA, H264 AAC_FIXED, PCM_S32LE_ENCODER VOLUME_FILTER) += fate-ffmpeg-streamloop-transcode-av
+FATE_SAMPLES_FFMPEG-$(call FRAMECRC, MATROSKA, H264 AAC_FIXED, PCM_S32LE_ENCODER VOLUME_FILTER ARESAMPLE_FILTER) += fate-ffmpeg-streamloop-transcode-av
 fate-ffmpeg-streamloop-transcode-av: CMD = \
     framecrc -auto_conversion_filters -stream_loop 3 -c:a aac_fixed -i $(TARGET_SAMPLES)/mkv/1242-small.mkv \
     -af volume=0:precision=fixed -c:a pcm_s32le
@@ -254,3 +256,10 @@ fate-ffmpeg-streamcopy-t: CMD = ffmpeg                                          
     -stream_loop -1 -f rawvideo -s 352x288 -pix_fmt yuv420p -i $(TARGET_PATH)/tests/data/vsynth_lena.yuv  \
     -c copy -f null -t 1 -
 FATE_FFMPEG-$(call REMUX, RAWVIDEO) += fate-ffmpeg-streamcopy-t
+
+# Test loopback decoding and passing the output to a complex graph.
+fate-ffmpeg-loopback-decoding: tests/data/vsynth_lena.yuv
+fate-ffmpeg-loopback-decoding: CMD = transcode \
+    "rawvideo -s 352x288 -pix_fmt yuv420p" $(TARGET_PATH)/tests/data/vsynth_lena.yuv nut \
+    "-map 0:v:0 -c:v mpeg2video -f null - -flags +bitexact -idct simple -threads $$threads -dec 0:0 -filter_complex '[0:v][dec:0]hstack[stack]' -map '[stack]' -c:v ffv1" ""
+FATE_FFMPEG-$(call ENCDEC2, MPEG2VIDEO, FFV1, NUT, HSTACK_FILTER PIPE_PROTOCOL FRAMECRC_MUXER) += fate-ffmpeg-loopback-decoding

@@ -832,6 +832,7 @@ static int new_stream_audio(Muxer *mux, const OptionsContext *o,
         int channels = 0;
         char *layout = NULL;
         char *sample_fmt = NULL;
+        const char *apad = NULL;
 
         MATCH_PER_STREAM_OPT(audio_channels, i, channels, oc, st);
         if (channels) {
@@ -840,24 +841,9 @@ static int new_stream_audio(Muxer *mux, const OptionsContext *o,
         }
 
         MATCH_PER_STREAM_OPT(audio_ch_layouts, str, layout, oc, st);
-        if (layout) {
-            if (av_channel_layout_from_string(&audio_enc->ch_layout, layout) < 0) {
-#if FF_API_OLD_CHANNEL_LAYOUT
-                uint64_t mask;
-                AV_NOWARN_DEPRECATED({
-                mask = av_get_channel_layout(layout);
-                })
-                if (!mask) {
-#endif
-                    av_log(ost, AV_LOG_FATAL, "Unknown channel layout: %s\n", layout);
-                    return AVERROR(EINVAL);
-#if FF_API_OLD_CHANNEL_LAYOUT
-                }
-                av_log(ost, AV_LOG_WARNING, "Channel layout '%s' uses a deprecated syntax.\n",
-                       layout);
-                av_channel_layout_from_mask(&audio_enc->ch_layout, mask);
-#endif
-            }
+        if (layout && av_channel_layout_from_string(&audio_enc->ch_layout, layout) < 0) {
+            av_log(ost, AV_LOG_FATAL, "Unknown channel layout: %s\n", layout);
+            return AVERROR(EINVAL);
         }
 
         MATCH_PER_STREAM_OPT(sample_fmts, str, sample_fmt, oc, st);
@@ -869,8 +855,12 @@ static int new_stream_audio(Muxer *mux, const OptionsContext *o,
 
         MATCH_PER_STREAM_OPT(audio_sample_rate, i, audio_enc->sample_rate, oc, st);
 
-        MATCH_PER_STREAM_OPT(apad, str, ost->apad, oc, st);
-        ost->apad = av_strdup(ost->apad);
+        MATCH_PER_STREAM_OPT(apad, str, apad, oc, st);
+        if (apad) {
+            ost->apad = av_strdup(apad);
+            if (!ost->apad)
+                return AVERROR(ENOMEM);
+        }
     }
 
     return 0;

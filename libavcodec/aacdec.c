@@ -36,6 +36,7 @@
 #define TX_TYPE AV_TX_FLOAT_MDCT
 
 #include "libavutil/float_dsp.h"
+#include "libavutil/mem.h"
 #include "libavutil/opt.h"
 #include "avcodec.h"
 #include "codec_internal.h"
@@ -564,7 +565,6 @@ const FFCodec ff_aac_decoder = {
     },
     .p.capabilities  = AV_CODEC_CAP_CHANNEL_CONF | AV_CODEC_CAP_DR1,
     .caps_internal   = FF_CODEC_CAP_INIT_CLEANUP,
-    CODEC_OLD_CHANNEL_LAYOUTS_ARRAY(ff_aac_channel_layout)
     .p.ch_layouts    = ff_aac_ch_layout,
     .flush = flush,
     .p.priv_class    = &aac_decoder_class,
@@ -590,7 +590,6 @@ const FFCodec ff_aac_latm_decoder = {
     },
     .p.capabilities  = AV_CODEC_CAP_CHANNEL_CONF | AV_CODEC_CAP_DR1,
     .caps_internal   = FF_CODEC_CAP_INIT_CLEANUP,
-    CODEC_OLD_CHANNEL_LAYOUTS_ARRAY(ff_aac_channel_layout)
     .p.ch_layouts    = ff_aac_ch_layout,
     .flush = flush,
     .p.profiles      = NULL_IF_CONFIG_SMALL(ff_aac_profiles),
