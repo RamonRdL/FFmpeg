@@ -18632,6 +18632,13 @@ This parameter keeps the last mask on the image for the specified number of fram
 @item draw_object_diagonal (default: 0)
 When this parameter is enabled, it will draw the diagonal of the smallest rectangle that can encompass the detected object (without altering the rectangle's orientation).
 
+@item mask_not_intersect_frames (default: 0)
+If this parameter is enabled, it will make every frame fully black except in case of tripwire intersection.
+
+@item mask_detail_level (default: 1)
+0: An unmasked rectangles will contain the objects. (This rectangle is the smallest rectangle what the object could fit in)
+1: The previous rectangle will be filled with smaller rectangles (the size of thiese rectagles is the grid size)
+
 @item json_output_line_break (default: 0)
 Allows line breaks in the output.
 

@@ -63,8 +63,8 @@
 #define PI 3.14159265358979323846
 #define SIZE 10000
 
-static const char* version = "2.06.13";
-static const char* release_date = "2024.03.06";
+static const char* version = "2.06.14";
+static const char* release_date = "2024.04.02";
 static int video_frame_count = 0;
 static int counter = 0;  // Used for history storing, to store, how many objects we have
 static int id_counter = 0;
@@ -134,6 +134,7 @@ typedef struct TDContext {
     int tripwire_type;
     int std_err_text_output_enable;
     int mask_not_intersect_frames;
+    int mask_detail_level;
 } TDContext;
 
 typedef struct Rectangle_center
@@ -228,6 +229,7 @@ static const AVOption object_tracker_options[] = {
         {"keep_mask_on_static_image", "how many static frame will get the last moved mask.", OFFSET(keep_mask_on_image), AV_OPT_TYPE_INT, { .i64 = 1 }, 1, 1000, FLAGS },
         {"draw_object_diagonal", "draw the two diagonal for the detected object", OFFSET(draw_diagonal), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, FLAGS },
         {"mask_not_intersect_frames", "makes every frame fully black if no intersect is detected", OFFSET(mask_not_intersect_frames), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, FLAGS },
+        {"mask_detail_level", "changes the mask type", OFFSET(mask_detail_level), AV_OPT_TYPE_BOOL, { .i64 = 1 }, 0, 1, FLAGS },
 
         // Logging
         {"json_output_line_break", "set the output line breaks", OFFSET(line_break), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, FLAGS },
@@ -1023,6 +1025,7 @@ static void mask_image(Object** object_list, int object_counter, AVFrame *frame,
     int x_min = frame->width, y_min = frame->height, x_max = 0, y_max = 0;
     int color[3] = {16, 128, 128};  // black
     int left_out[50][4];
+    int active_obj_list[50];
     int active_objects = 0;
     int object_in_rectangle = 0;
     if (object_counter == 0){
@@ -1037,6 +1040,7 @@ static void mask_image(Object** object_list, int object_counter, AVFrame *frame,
             left_out[active_objects][1] = object_list[i]->y_min;
             left_out[active_objects][2] = object_list[i]->x_max;
             left_out[active_objects][3] = object_list[i]->y_max;
+            active_obj_list[active_objects] = i;
             active_objects++;
             if (x_min > object_list[i]->x_min)
                 x_min = object_list[i]->x_min;
@@ -1063,17 +1067,37 @@ static void mask_image(Object** object_list, int object_counter, AVFrame *frame,
     for (int z=x_max+1; z < frame->width; z++){
         draw_line(frame, z, y_max-1, z, y_min-1, color);
     }
-
-    for (int x=x_min-5; x < x_max; x += 8){  // -5 to make a little big bigger window
-        for (int y = y_min-5; y < y_max; y += 8){
-            object_in_rectangle = 0;
-            for (int i = 0; i < active_objects; i++){
-                if (point_in_rectangle(x, y, left_out[i][2], left_out[i][0], left_out[i][3], left_out[i][1]))
-                    object_in_rectangle = 1;
+    if (s->mask_detail_level == 0){
+        for (int x=x_min; x < x_max; x += 15){
+            for (int y = y_min; y < y_max; y += 15){
+                object_in_rectangle = 0;
+                for (int i = 0; i < active_objects; i++){
+                    if (point_in_rectangle(x, y, left_out[i][2], left_out[i][0], left_out[i][3], left_out[i][1]))
+                        object_in_rectangle = 1;
+                    }
+                if (!object_in_rectangle){
+                    for (int line = 0; line < 16; line ++){
+                        draw_line(frame, x+line, y, x+line, y+16, color);
+                    }
                 }
-            if (!object_in_rectangle){
-                for (int line = 0; line < 16; line ++){
-                    draw_line(frame, x+line, y, x+line, y+16, color);
+            }
+        }
+    }else {
+        for (int x=x_min; x < x_max; x += 15){
+            for (int y = y_min; y < y_max; y += 15){
+                object_in_rectangle = 0;
+                for (int i = 0; i < active_objects; i++){
+                    for (int rec = 0; rec < object_list[active_obj_list[i]]->rectangle_counter; rec++){
+                        if (point_in_rectangle(object_list[active_obj_list[i]]->rectangles[rec].x, object_list[active_obj_list[i]]->rectangles[rec].y, x+s->grid_size, x, y+s->grid_size, y)){
+                            object_in_rectangle = 1;
+                            continue;
+                        }
+                    }
+                }
+                if (!object_in_rectangle){
+                    for (int line = 0; line < 16; line ++){
+                        draw_line(frame, x+line, y, x+line, y+16, color);
+                    }
                 }
             }
         }
