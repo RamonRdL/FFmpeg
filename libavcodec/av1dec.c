@@ -359,6 +359,25 @@ static void coded_lossless_param(AV1DecContext *s)
     }
 }
 
+static void order_hint_info(AV1DecContext *s)
+{
+    const AV1RawFrameHeader *header = s->raw_frame_header;
+    const AV1RawSequenceHeader *seq = s->raw_seq;
+    AV1Frame *frame = &s->cur_frame;
+
+    frame->order_hint = header->order_hint;
+
+    for (int i = 0; i < AV1_REFS_PER_FRAME; i++) {
+        int ref_name = i + AV1_REF_FRAME_LAST;
+        int ref_slot = header->ref_frame_idx[i];
+        int ref_order_hint = s->ref[ref_slot].order_hint;
+
+        frame->order_hints[ref_name] = ref_order_hint;
+        frame->ref_frame_sign_bias[ref_name] =
+            get_relative_dist(seq, ref_order_hint, frame->order_hint);
+    }
+}
+
 static void load_grain_params(AV1DecContext *s)
 {
     const AV1RawFrameHeader *header = s->raw_frame_header;
@@ -701,6 +720,12 @@ static int av1_frame_ref(AVCodecContext *avctx, AV1Frame *dst, const AV1Frame *s
            sizeof(dst->film_grain));
     dst->coded_lossless = src->coded_lossless;
 
+    dst->order_hint = src->order_hint;
+    memcpy(dst->ref_frame_sign_bias, src->ref_frame_sign_bias,
+           sizeof(dst->ref_frame_sign_bias));
+    memcpy(dst->order_hints, src->order_hints,
+           sizeof(dst->order_hints));
+
     return 0;
 
 fail:
@@ -1002,7 +1027,8 @@ static int export_itut_t35(AVCodecContext *avctx, AVFrame *frame,
             provider_oriented_code != 0x800)
             break;
 
-        ret = ff_dovi_rpu_parse(&s->dovi, gb.buffer, gb.buffer_end - gb.buffer);
+        ret = ff_dovi_rpu_parse(&s->dovi, gb.buffer, gb.buffer_end - gb.buffer,
+                                avctx->err_recognition);
         if (ret < 0) {
             av_log(avctx, AV_LOG_WARNING, "Error parsing DOVI OBU.\n");
             break; // ignore
@@ -1256,6 +1282,7 @@ static int get_current_frame(AVCodecContext *avctx)
     global_motion_params(s);
     skip_mode_params(s);
     coded_lossless_param(s);
+    order_hint_info(s);
     load_grain_params(s);
 
     return ret;

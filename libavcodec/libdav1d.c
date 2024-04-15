@@ -385,7 +385,7 @@ static int libdav1d_receive_frame(AVCodecContext *c, AVFrame *frame)
 {
     Libdav1dContext *dav1d = c->priv_data;
     Dav1dPicture pic = { 0 }, *p = &pic;
-    AVPacket *pkt;
+    const AVPacket *pkt;
 #if FF_DAV1D_VERSION_AT_LEAST(5,1)
     enum Dav1dEventFlags event_flags = 0;
 #endif
@@ -439,7 +439,7 @@ static int libdav1d_receive_frame(AVCodecContext *c, AVFrame *frame)
               INT_MAX);
     ff_set_sar(c, frame->sample_aspect_ratio);
 
-    pkt = (AVPacket *)p->m.user_data.data;
+    pkt = (const AVPacket *)p->m.user_data.data;
 
     // match timestamps and packet size
     res = ff_decode_frame_props_from_pkt(c, frame, pkt);
@@ -567,7 +567,8 @@ static int libdav1d_receive_frame(AVCodecContext *c, AVFrame *frame)
                 provider_oriented_code != 0x800)
                 break;
 
-            res = ff_dovi_rpu_parse(&dav1d->dovi, gb.buffer, gb.buffer_end - gb.buffer);
+            res = ff_dovi_rpu_parse(&dav1d->dovi, gb.buffer, gb.buffer_end - gb.buffer,
+                                    c->err_recognition);
             if (res < 0) {
                 av_log(c, AV_LOG_WARNING, "Error parsing DOVI OBU.\n");
                 break; // ignore
