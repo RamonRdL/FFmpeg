@@ -916,6 +916,64 @@ static int mov_write_dmlp_tag(AVFormatContext *s, AVIOContext *pb, MOVTrack *tra
     return update_size(pb, pos);
 }
 
+static int mov_write_SA3D_tag(AVFormatContext *s, AVIOContext *pb, MOVTrack *track)
+{
+    const AVDictionaryEntry *str = av_dict_get(track->st->metadata, "SA3D", NULL, 0);
+    AVChannelLayout ch_layout = { 0 };
+    int64_t pos;
+    int ambisonic_order, ambi_channels, non_diegetic_channels;
+    int i, ret;
+
+    if (!str)
+        return 0;
+
+    ret = av_channel_layout_from_string(&ch_layout, str->value);
+    if (ret < 0) {
+        if (ret == AVERROR(EINVAL)) {
+invalid:
+            av_log(s, AV_LOG_ERROR, "Invalid SA3D layout: \"%s\"\n", str->value);
+            ret = 0;
+        }
+        av_channel_layout_uninit(&ch_layout);
+        return ret;
+    }
+
+    if (track->st->codecpar->ch_layout.nb_channels != ch_layout.nb_channels)
+        goto invalid;
+
+    ambisonic_order = av_channel_layout_ambisonic_order(&ch_layout);
+    if (ambisonic_order < 0)
+        goto invalid;
+
+    ambi_channels = (ambisonic_order + 1LL) * (ambisonic_order + 1LL);
+    non_diegetic_channels = ch_layout.nb_channels - ambi_channels;
+    if (non_diegetic_channels &&
+        (non_diegetic_channels != 2 ||
+         av_channel_layout_subset(&ch_layout, AV_CH_LAYOUT_STEREO) != AV_CH_LAYOUT_STEREO))
+        goto invalid;
+
+    av_log(s, AV_LOG_VERBOSE, "Inserting SA3D box with layout: \"%s\"\n", str->value);
+
+    pos = avio_tell(pb);
+
+    avio_wb32(pb, 0); // Size
+    ffio_wfourcc(pb, "SA3D");
+    avio_w8(pb, 0); // version
+    avio_w8(pb, (!!non_diegetic_channels) << 7); // head_locked_stereo and ambisonic_type
+    avio_wb32(pb, ambisonic_order); // ambisonic_order
+    avio_w8(pb, 0); // ambisonic_channel_ordering
+    avio_w8(pb, 0); // ambisonic_normalization
+    avio_wb32(pb, ch_layout.nb_channels); // num_channels
+    for (i = 0; i < ambi_channels; i++)
+        avio_wb32(pb, av_channel_layout_channel_from_index(&ch_layout, i) - AV_CHAN_AMBISONIC_BASE);
+    for (; i < ch_layout.nb_channels; i++)
+        avio_wb32(pb, av_channel_layout_channel_from_index(&ch_layout, i) + ambi_channels);
+
+    av_channel_layout_uninit(&ch_layout);
+
+    return update_size(pb, pos);
+}
+
 static int mov_write_chan_tag(AVFormatContext *s, AVIOContext *pb, MOVTrack *track)
 {
     uint32_t layout_tag, bitmap, *channel_desc;
@@ -1221,6 +1279,8 @@ static int mov_write_chnl_tag(AVFormatContext *s, AVIOContext *pb, MOVTrack *tra
     if (ret || !config) {
         config = 0;
         speaker_pos = av_malloc(layout->nb_channels);
+        if (!speaker_pos)
+            return AVERROR(ENOMEM);
         ret = ff_mov_get_channel_positions_from_layout(layout,
                 speaker_pos, layout->nb_channels);
         if (ret) {
@@ -1242,8 +1302,7 @@ static int mov_write_chnl_tag(AVFormatContext *s, AVIOContext *pb, MOVTrack *tra
     if (config) {
         avio_wb64(pb, 0);
     } else {
-        for (int i = 0; i < layout->nb_channels; i++)
-            avio_w8(pb, speaker_pos[i]);
+        avio_write(pb, speaker_pos, layout->nb_channels);
         av_freep(&speaker_pos);
     }
 
@@ -1417,6 +1476,11 @@ static int mov_write_audio_tag(AVFormatContext *s, AVIOContext *pb, MOVMuxContex
 
     if (ret < 0)
         return ret;
+
+    if (track->mode == MODE_MP4 && track->par->codec_type == AVMEDIA_TYPE_AUDIO
+            && ((ret = mov_write_SA3D_tag(s, pb, track)) < 0)) {
+        return ret;
+    }
 
     if (track->mode == MODE_MOV && track->par->codec_type == AVMEDIA_TYPE_AUDIO
             && ((ret = mov_write_chan_tag(s, pb, track)) < 0)) {
@@ -2526,16 +2590,21 @@ static int mov_write_video_tag(AVFormatContext *s, AVIOContext *pb, MOVMuxContex
         const AVPacketSideData *spherical_mapping = av_packet_side_data_get(track->st->codecpar->coded_side_data,
                                                                             track->st->codecpar->nb_coded_side_data,
                                                                             AV_PKT_DATA_SPHERICAL);
-        const AVPacketSideData *dovi = av_packet_side_data_get(track->st->codecpar->coded_side_data,
-                                                               track->st->codecpar->nb_coded_side_data,
-                                                               AV_PKT_DATA_DOVI_CONF);
-
         if (stereo_3d)
             mov_write_st3d_tag(s, pb, (AVStereo3D*)stereo_3d->data);
         if (spherical_mapping)
             mov_write_sv3d_tag(mov->fc, pb, (AVSphericalMapping*)spherical_mapping->data);
-        if (dovi)
+    }
+
+    if (track->mode == MODE_MP4) {
+        const AVPacketSideData *dovi = av_packet_side_data_get(track->st->codecpar->coded_side_data,
+                                                               track->st->codecpar->nb_coded_side_data,
+                                                               AV_PKT_DATA_DOVI_CONF);
+        if (dovi && mov->fc->strict_std_compliance <= FF_COMPLIANCE_UNOFFICIAL) {
             mov_write_dvcc_dvvc_tag(s, pb, (AVDOVIDecoderConfigurationRecord *)dovi->data);
+        } else if (dovi) {
+            av_log(mov->fc, AV_LOG_WARNING, "Not writing 'dvcC'/'dvvC' box. Requires -strict unofficial.\n");
+        }
     }
 
     if (track->par->sample_aspect_ratio.den && track->par->sample_aspect_ratio.num) {
@@ -6667,6 +6736,7 @@ static int mov_write_subtitle_end_packet(AVFormatContext *s,
 #if CONFIG_IAMFENC
 static int mov_build_iamf_packet(AVFormatContext *s, MOVTrack *trk, AVPacket *pkt)
 {
+    uint8_t *data;
     int ret;
 
     if (pkt->stream_index == trk->first_iamf_idx) {
@@ -6680,40 +6750,34 @@ static int mov_build_iamf_packet(AVFormatContext *s, MOVTrack *trk, AVPacket *pk
     if (ret < 0)
         return ret;
 
-    if (pkt->stream_index == trk->last_iamf_idx) {
-        uint8_t *data;
+    if (pkt->stream_index != trk->last_iamf_idx)
+        return AVERROR(EAGAIN);
 
-        ret = avio_close_dyn_buf(trk->iamf_buf, &data);
-        trk->iamf_buf = NULL;
-
-        if (!ret) {
-            if (pkt->size) {
-                // Either all or none of the packets for a single
-                // IA Sample may be empty.
-                av_log(s, AV_LOG_ERROR, "Unexpected packet from "
-                                        "stream #%d\n", pkt->stream_index);
-                ret = AVERROR_INVALIDDATA;
-            }
-            av_free(data);
-            return ret;
+    ret = avio_close_dyn_buf(trk->iamf_buf, &data);
+    trk->iamf_buf = NULL;
+    if (!ret) {
+        if (pkt->size) {
+            // Either all or none of the packets for a single
+            // IA Sample may be empty.
+            av_log(s, AV_LOG_ERROR, "Unexpected packet from "
+                                     "stream #%d\n", pkt->stream_index);
+            ret = AVERROR_INVALIDDATA;
         }
-        av_buffer_unref(&pkt->buf);
-        pkt->buf = av_buffer_create(data, ret, NULL, NULL, 0);
-        if (!pkt->buf) {
-            av_free(data);
-            return AVERROR(ENOMEM);
-        }
-        pkt->data = data;
-        pkt->size = ret;
-        pkt->stream_index = trk->first_iamf_idx;
+        av_free(data);
+        return ret;
+    }
 
-        ret = avio_open_dyn_buf(&trk->iamf_buf);
-        if (ret < 0)
-            return ret;
-    } else
-        ret = AVERROR(EAGAIN);
+    av_buffer_unref(&pkt->buf);
+    pkt->buf = av_buffer_create(data, ret, NULL, NULL, 0);
+    if (!pkt->buf) {
+        av_free(data);
+        return AVERROR(ENOMEM);
+    }
+    pkt->data = data;
+    pkt->size = ret;
+    pkt->stream_index = trk->first_iamf_idx;
 
-    return ret;
+    return avio_open_dyn_buf(&trk->iamf_buf);
 }
 #endif
 
