@@ -23070,6 +23070,64 @@ ffmpeg -i main.mpg -i ref.mkv -lavfi  "[0:v]settb=AVTB,setpts=PTS-STARTPTS[main]
 @end example
 @end itemize
 
+@section static_mask
+
+Apply a static mask to areas of the video that remain unchanged over a specified number of frames.
+
+This filter divides the video frame into rectangular chunks and calculates the sum of pixel values for each chunk. If the difference in the sum of pixel values between the current frame and a previous frame (specified by the `frame_back` parameter) is below a defined threshold, the chunk is considered static. Static chunks are masked with a solid color.
+
+This filter is useful for identifying and masking areas of the video that remain static over time.
+
+@table @option
+
+@item size
+Set the side length of the rectangular chunks (in pixels). The default value is 20. The size must be greater than 0 and less than or equal to 600.
+
+@item threshold
+Set the threshold for determining if a chunk is static. The default value is 20. The threshold represents the maximum allowable difference in the average pixel value for a chunk between the current frame and a frame from `frame_back` frames ago. The threshold must be between 0 and 1000.
+
+@item frame_back
+Set the number of frames to buffer and look back for comparison. The default value is 1. This value must be at least 1. A higher value allows for comparing the current frame against older frames, potentially capturing slower changes.
+
+@end table
+
+@example
+# Mask static areas in the video with default parameters.
+ffmpeg -i input.mp4 -vf "static_mask" output.mp4
+
+# Mask static areas with a chunk size of 50 pixels, a threshold of 50, and comparing against the frame 5 frames back.
+ffmpeg -i input.mp4 -vf "static_mask=size=50:threshold=50:frame_back=5" output.mp4
+@end example
+
+@subsection Description
+
+The `static_mask` filter operates by dividing each frame of the video into a grid of rectangular chunks. It then calculates the sum of the pixel values for each chunk. This sum is compared against the corresponding chunk's sum from a frame that occurred `frame_back` frames ago.
+
+If the difference in the average pixel value of a chunk between the current frame and the frame `frame_back` frames ago is less than the `threshold`, the chunk is considered static and is replaced with a solid color.
+
+This solid color is set to the YUV values corresponding to black: Y=16, U=128, V=128. This effectively masks the static areas of the video, making them easily identifiable or obscuring them as required.
+
+@subsection Usage
+
+The `size` option determines the granularity of the masking. Smaller sizes result in finer-grained detection of static areas, but can be more computationally intensive. Larger sizes provide a coarser mask but are faster to compute.
+
+The `threshold` option allows you to control the sensitivity of the static detection. A lower threshold will result in more areas being considered static, while a higher threshold will only mask areas with minimal changes.
+
+The `frame_back` option allows you to specify how many frames back to look when comparing for static areas. This can be useful for videos where static areas need to be identified over a longer period, such as in surveillance footage or timelapse videos.
+
+@subsection Example Commands
+
+The following command applies the `static_mask` filter with the default settings:
+@example
+ffmpeg -i input.mp4 -vf "static_mask" output.mp4
+@end example
+
+The next example uses a chunk size of 50 pixels, a threshold of 50, and compares the current frame against the frame 5 frames back:
+@example
+ffmpeg -i input.mp4 -vf "static_mask=size=50:threshold=50:frame_back=5" output.mp4
+@end example
+
+
 @section stereo3d
 
 Convert between different stereoscopic image formats.
