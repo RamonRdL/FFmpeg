@@ -18639,6 +18639,10 @@ If this parameter is enabled, it will make every frame fully black except in cas
 0: An unmasked rectangles will contain the objects. (This rectangle is the smallest rectangle what the object could fit in)
 1: The previous rectangle will be filled with smaller rectangles (the size of thiese rectagles is the grid size)
 
+@item mask_reduce (default: 15)
+The mask areas will be black if no mv-s inside them.
+With this parameter its possible to make the checking area for mv-s bigger, creating an outline for the object and reducing the masked rectangles "inside" the object
+
 @item json_output_line_break (default: 0)
 Allows line breaks in the output.
 
