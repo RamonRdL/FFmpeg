@@ -76,3 +76,12 @@
 2024.04.02 Sz Ramon
 	vf_object_tracker v 2.06.14
 		mask_detail_level paraméter 0: Nagy négyzet, 1: Kockás mask
+
+2024.06.10 Sz Ramon
+    vf_object_tracker v 2.6.15:
+        mask_reduce paraméter
+        object mask-nál pontosabb rajzolás
+    vf_mask_static v 1.0:
+        paraméterek: size, threshold, framme_back
+    select:
+        black_if_no_motion: Ha ez a paraméter bevan kapcsolva a filter akkor is ad képet ha nincsmozgás, csak ki van sötétítve

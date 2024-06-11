@@ -445,6 +445,7 @@ extern const AVFilter ff_vf_scharr;
 extern const AVFilter ff_vf_scroll;
 extern const AVFilter ff_vf_segment;
 extern const AVFilter ff_vf_select;
+extern const AVFilter ff_vf_static_mask;
 extern const AVFilter ff_vf_selectivecolor;
 extern const AVFilter ff_vf_sendcmd;
 extern const AVFilter ff_vf_separatefields;

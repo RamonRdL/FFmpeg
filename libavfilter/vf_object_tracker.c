@@ -134,6 +134,7 @@ typedef struct TDContext {
     int tripwire_type;
     int std_err_text_output_enable;
     int mask_not_intersect_frames;
+    int mask_reduce;
     int mask_detail_level;
 } TDContext;
 
@@ -230,6 +231,7 @@ static const AVOption object_tracker_options[] = {
         {"draw_object_diagonal", "draw the two diagonal for the detected object", OFFSET(draw_diagonal), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, FLAGS },
         {"mask_not_intersect_frames", "makes every frame fully black if no intersect is detected", OFFSET(mask_not_intersect_frames), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, FLAGS },
         {"mask_detail_level", "changes the mask type", OFFSET(mask_detail_level), AV_OPT_TYPE_BOOL, { .i64 = 1 }, 0, 1, FLAGS },
+        {"mask_reduce", "Makes the object mask bigger.", OFFSET(mask_reduce), AV_OPT_TYPE_INT, { .i64 = 15 }, -1, 1000, FLAGS },
 
         // Logging
         {"json_output_line_break", "set the output line breaks", OFFSET(line_break), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, FLAGS },
@@ -486,7 +488,9 @@ static void draw_object_arrow(Object *obj, AVFrame *frame){
  */
 static void draw_polygon(Object *obj, AVFrame *frame, TDContext *s){
     int half_grid = s->grid_size/2;
-    generate_random_rgb_to_obj(obj);
+    if (obj->color[0] == -1){
+        generate_random_rgb_to_obj(obj);
+    }
     draw_object_arrow(obj, frame);
     for (int i = 0; obj->rectangle_counter > i; i++){
         int x1 = obj->rectangles[i].x + half_grid;
@@ -589,6 +593,7 @@ static Object* create_object(void)
     o->exists_counter = 0;
     o->stayed_in_side = 0;
     o->reset_stayed_in_side = 0;    
+    o->color[0] = -1;
     return o;
 }
 
@@ -1036,10 +1041,10 @@ static void mask_image(Object** object_list, int object_counter, AVFrame *frame,
     }
     for (int i=0; i < object_counter; i++){
         if (is_object_not_filtered(object_list[i], s)) {
-            left_out[active_objects][0] = object_list[i]->x_min;
-            left_out[active_objects][1] = object_list[i]->y_min;
-            left_out[active_objects][2] = object_list[i]->x_max;
-            left_out[active_objects][3] = object_list[i]->y_max;
+            left_out[active_objects][0] = object_list[i]->x_min-s->mask_reduce;
+            left_out[active_objects][1] = object_list[i]->y_min-s->mask_reduce;
+            left_out[active_objects][2] = object_list[i]->x_max+s->mask_reduce;
+            left_out[active_objects][3] = object_list[i]->y_max+s->mask_reduce;
             active_obj_list[active_objects] = i;
             active_objects++;
             if (x_min > object_list[i]->x_min)
@@ -1055,48 +1060,53 @@ static void mask_image(Object** object_list, int object_counter, AVFrame *frame,
                 y_max = object_list[i]->y_max;
         }
     }
-    for (int z=0; z <= y_min; z++){  // From up to down: full width, down to y_min
+    for (int z=0; z <= y_min-s->mask_reduce; z++){  // From up to down: full width, down to y_min
         draw_line(frame, 0, z, frame->width, z, color);
     }
-    for (int z=y_max; z <= frame->height-1; z++){
+    for (int z=y_max+s->mask_reduce; z <= frame->height-1; z++){
         draw_line(frame, 0, z, frame->width, z, color);
     }
-    for (int z=0; z <= x_min; z++){
-        draw_line(frame, z, y_min, z, y_max, color);
+    for (int z=0; z <= x_min-s->mask_reduce; z++){
+        draw_line(frame, z, y_min-s->mask_reduce, z, y_max+s->mask_reduce, color);
     }
-    for (int z=x_max+1; z < frame->width; z++){
-        draw_line(frame, z, y_max-1, z, y_min-1, color);
+    for (int z=x_max+1+s->mask_reduce; z < frame->width; z++){
+        draw_line(frame, z, y_max-1+s->mask_reduce, z, y_min-1-s->mask_reduce, color);
     }
     if (s->mask_detail_level == 0){
-        for (int x=x_min; x < x_max; x += 15){
-            for (int y = y_min; y < y_max; y += 15){
+        for (int x=x_min-s->mask_reduce; x < x_max+s->mask_reduce; x += s->grid_size){
+            for (int y = y_min-s->mask_reduce; y < y_max+s->mask_reduce; y += s->grid_size){
                 object_in_rectangle = 0;
                 for (int i = 0; i < active_objects; i++){
-                    if (point_in_rectangle(x, y, left_out[i][2], left_out[i][0], left_out[i][3], left_out[i][1]))
+                    if (point_in_rectangle(x, y, left_out[i][2], left_out[i][0], left_out[i][3], left_out[i][1])){
                         object_in_rectangle = 1;
+                        break;
+                        }
                     }
                 if (!object_in_rectangle){
-                    for (int line = 0; line < 16; line ++){
-                        draw_line(frame, x+line, y, x+line, y+16, color);
+                    for (int line = 0; line < s->grid_size; line ++){
+                        draw_line(frame, x+line, y, x+line, y+s->grid_size, color);
                     }
                 }
             }
         }
     }else {
-        for (int x=x_min; x < x_max; x += 15){
-            for (int y = y_min; y < y_max; y += 15){
+        for (int x=x_min-s->mask_reduce; x < x_max+s->mask_reduce; x += (s->grid_size)){
+            for (int y = y_min-s->mask_reduce; y < y_max+s->mask_reduce; y += (s->grid_size)){
                 object_in_rectangle = 0;
                 for (int i = 0; i < active_objects; i++){
                     for (int rec = 0; rec < object_list[active_obj_list[i]]->rectangle_counter; rec++){
-                        if (point_in_rectangle(object_list[active_obj_list[i]]->rectangles[rec].x, object_list[active_obj_list[i]]->rectangles[rec].y, x+s->grid_size, x, y+s->grid_size, y)){
+                        if (point_in_rectangle(object_list[active_obj_list[i]]->rectangles[rec].x, object_list[active_obj_list[i]]->rectangles[rec].y, x+s->grid_size+s->mask_reduce, x-s->mask_reduce, y+s->grid_size+s->mask_reduce, y-s->mask_reduce)){
                             object_in_rectangle = 1;
-                            continue;
+                            break;
                         }
                     }
+                    if (object_in_rectangle){
+                        break;
+                    }
                 }
-                if (!object_in_rectangle){
-                    for (int line = 0; line < 16; line ++){
-                        draw_line(frame, x+line, y, x+line, y+16, color);
+                if (object_in_rectangle == 0){
+                    for (int line = 0; line < s->grid_size; line ++){
+                        draw_line(frame, x+line, y, x+line, y+s->grid_size, color);
                     }
                 }
             }
@@ -1357,7 +1367,7 @@ static void merge_objects(Object** objects, TDContext *s, int *ptr_object_counte
     Object *new_objects[2000];
     int object_counter = 0;
     for (int i=0; i<*ptr_object_counter; i++){
-        if (objects[i]->x_max == -1)
+        if (objects[i]->x_max == -1) // If this value is -1 the object is get filtered by size
             continue;
         for (int other_object = i+1; other_object<*ptr_object_counter; other_object++){
             if (objects[other_object]->x_max == -1)
@@ -1433,6 +1443,27 @@ static void find_motion_vector_image_size(AVFrameSideData *motion_vector_table, 
 
 
 /**
+ * This function is for creating colored pixels to show is a duplicated mask
+*/
+static void copied_mask_notification(AVFrame *frame)
+{
+
+    int green[3] = {149, 43, 21}; 
+    int red[3] = {76, 84, 255};
+    int yellow[3] = {210, 16, 146};
+
+    if (!frame || !frame->data[0]) return;
+
+    draw_line(frame, 0, 0, 0, 5, green);
+    draw_line(frame, 1, 0, 1, 5, green);
+    draw_line(frame, 2, 0, 2, 5, red);
+    draw_line(frame, 3, 0, 3, 5, red);
+    draw_line(frame, 4, 0, 4, 5, yellow);
+    draw_line(frame, 5, 0, 5, 5, yellow);
+}
+
+
+/**
  * If the mask_static_image_parts is turned on, and we want to keep the mask for many frames after no objects get detected, this funciton will count and keep the mask on.
 */
 static void keep_mask_on_image(Object** object_lsit, int object_counter, AVFrame *frame, TDContext *s)
@@ -1441,6 +1472,7 @@ static void keep_mask_on_image(Object** object_lsit, int object_counter, AVFrame
         if (s->keep_mask_on_image > last_mask_repeated_for){  // The mask shoud be repeated
             last_mask_repeated_for++;
             mask_image(object_lsit, object_counter, frame, s);
+            copied_mask_notification(frame);
         }else{
             mask_image(object_lsit, 0, frame, s); // Mask the image to black. its can't get here if there are object detected
         }

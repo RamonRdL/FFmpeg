@@ -169,6 +169,8 @@ typedef struct SelectContext {
     double select;
     int select_out;                 ///< mark the selected output pad index
     int nb_outputs;
+    int black_if_no_motion;         ///< Output black frame if no motion detected
+    double user_scene_threshold;
 } SelectContext;
 
 #define OFFSET(x) offsetof(SelectContext, x)
@@ -178,6 +180,7 @@ static const AVOption filt_name##_options[] = {                     \
     { "e",    "set an expression to use for selecting frames", OFFSET(expr_str), AV_OPT_TYPE_STRING, { .str = "1" }, .flags=FLAGS }, \
     { "outputs", "set the number of outputs", OFFSET(nb_outputs), AV_OPT_TYPE_INT, {.i64 = 1}, 1, INT_MAX, .flags=FLAGS }, \
     { "n",       "set the number of outputs", OFFSET(nb_outputs), AV_OPT_TYPE_INT, {.i64 = 1}, 1, INT_MAX, .flags=FLAGS }, \
+    { "black_if_no_motion", "output a black frame if no motion is detected", OFFSET(black_if_no_motion), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, FLAGS }, \
     { NULL }                                                            \
 }
 
@@ -223,6 +226,9 @@ static int config_input(AVFilterLink *inlink)
                  (desc->flags & AV_PIX_FMT_FLAG_PLANAR) &&
                  desc->nb_components >= 3;
 
+    const char *expr = select->expr_str;
+    const char *scene_expr = strstr(expr, "gt(scene,");
+
     select->bitdepth = desc->comp[0].depth;
     select->nb_planes = is_yuv ? 1 : av_pix_fmt_count_planes(inlink->format);
 
@@ -231,7 +237,7 @@ static int config_input(AVFilterLink *inlink)
         int vsub = desc->log2_chroma_h;
 
         select->width[plane] = line_size >> (select->bitdepth > 8);
-        select->height[plane] = plane == 1 || plane == 2 ?  AV_CEIL_RSHIFT(inlink->h, vsub) : inlink->h;
+        select->height[plane] = plane == 1 || plane == 2 ? AV_CEIL_RSHIFT(inlink->h, vsub) : inlink->h;
     }
 
     select->var_values[VAR_N]          = 0.0;
@@ -267,7 +273,7 @@ static int config_input(AVFilterLink *inlink)
     select->var_values[VAR_PICT_TYPE]         = NAN;
     select->var_values[VAR_INTERLACE_TYPE]    = NAN;
     select->var_values[VAR_SCENE]             = NAN;
-    select->var_values[VAR_CONSUMED_SAMPLES_N] = NAN;
+    select->var_values[VAR_CONSUMED_SAMPLES_N] = NAN;     
     select->var_values[VAR_SAMPLES_N]          = NAN;
 
     select->var_values[VAR_IH] = NAN;
@@ -281,6 +287,19 @@ static int config_input(AVFilterLink *inlink)
         if (!select->sad)
             return AVERROR(EINVAL);
     }
+
+    if (scene_expr) {
+        double user_threshold = 0.0;
+        if (sscanf(scene_expr, "gt(scene,%lf)", &user_threshold) == 1) {
+            select->user_scene_threshold = user_threshold;
+        } else {
+            av_log(inlink->dst, AV_LOG_ERROR, "Could not parse scene threshold from expression\n");
+            return AVERROR(EINVAL);
+        }
+    } else {
+        select->user_scene_threshold = 0.1;
+    }
+
     return 0;
 }
 
@@ -359,6 +378,8 @@ FF_ENABLE_DEPRECATION_WARNINGS
 #endif
     select->var_values[VAR_KEY] = !!(frame->flags & AV_FRAME_FLAG_KEY);
     select->var_values[VAR_CONCATDEC_SELECT] = get_concatdec_select(frame, av_rescale_q(frame->pts, inlink->time_base, AV_TIME_BASE_Q));
+    
+    select->select = res = av_expr_eval(select->expr, select->var_values, NULL);
 
     switch (inlink->type) {
     case AVMEDIA_TYPE_AUDIO:
@@ -371,19 +392,44 @@ FF_ENABLE_DEPRECATION_WARNINGS
 
         select->var_values[VAR_INTERLACE_TYPE] =
             !(frame->flags & AV_FRAME_FLAG_INTERLACED) ? INTERLACE_TYPE_P :
-        (frame->flags & AV_FRAME_FLAG_TOP_FIELD_FIRST) ? INTERLACE_TYPE_T : INTERLACE_TYPE_B;
+            (frame->flags & AV_FRAME_FLAG_TOP_FIELD_FIRST) ? INTERLACE_TYPE_T : INTERLACE_TYPE_B;
         select->var_values[VAR_PICT_TYPE] = frame->pict_type;
         if (select->do_scene_detect) {
             char buf[32];
             select->var_values[VAR_SCENE] = get_scene_score(ctx, frame);
-            // TODO: document metadata
             snprintf(buf, sizeof(buf), "%f", select->var_values[VAR_SCENE]);
             av_dict_set(&frame->metadata, "lavfi.scene_score", buf, 0);
+
+            // Check if we need to output a black frame due to no motion
+            if (select->black_if_no_motion && select->var_values[VAR_SCENE] < select->user_scene_threshold) {
+                // Fill the frame with black color
+                av_frame_make_writable(frame);
+                if (frame->format == AV_PIX_FMT_YUV420P || frame->format == AV_PIX_FMT_YUVJ420P) {
+                    // For YUV420P, set Y plane to 0 (black), U and V planes to 128 (neutral chroma)
+                    for (int i = 0; i < frame->height; i++) {
+                        memset(frame->data[0] + i * frame->linesize[0], 0, frame->width);
+                    }
+                    for (int i = 0; i < frame->height / 2; i++) {
+                        memset(frame->data[1] + i * frame->linesize[1], 128, frame->width / 2);
+                        memset(frame->data[2] + i * frame->linesize[2], 128, frame->width / 2);
+                    }
+                } else if (frame->format == AV_PIX_FMT_RGB24) {
+                    // For RGB24, set all planes to 0 (black)
+                    for (int i = 0; i < frame->height; i++) {
+                        memset(frame->data[0] + i * frame->linesize[0], 0, frame->width * 3);
+                    }
+                } else {
+                    // For other formats, a generic approach - zero out all data pointers
+                    for (int i = 0; i < AV_NUM_DATA_POINTERS && frame->data[i]; i++) {
+                        int size = frame->linesize[i] * (i == 0 ? frame->height : frame->height / 2);
+                        memset(frame->data[i], 0, size);
+                    }
+                }
+            }
         }
         break;
     }
 
-    select->select = res = av_expr_eval(select->expr, select->var_values, NULL);
     av_log(inlink->dst, AV_LOG_DEBUG,
            "n:%f pts:%f t:%f key:%d",
            select->var_values[VAR_N],
@@ -405,17 +451,19 @@ FF_ENABLE_DEPRECATION_WARNINGS
                select->var_values[VAR_CONSUMED_SAMPLES_N]);
         break;
     }
-
-    if (res == 0) {
+    if (res == 0 && !select->black_if_no_motion) {
         select->select_out = -1; /* drop */
     } else if (isnan(res) || res < 0) {
         select->select_out = 0; /* first output */
+    } else if (select->black_if_no_motion){
+        select->select = 1;
+        select->select_out = 0;
     } else {
         select->select_out = FFMIN(ceilf(res)-1, select->nb_outputs-1); /* other outputs */
     }
 
-    av_log(inlink->dst, AV_LOG_DEBUG, " -> select:%f select_out:%d\n", res, select->select_out);
 
+    av_log(inlink->dst, AV_LOG_DEBUG, " -> select:%f select_out:%d\n", res, select->select_out);
     if (res) {
         select->var_values[VAR_PREV_SELECTED_N]   = select->var_values[VAR_N];
         select->var_values[VAR_PREV_SELECTED_PTS] = select->var_values[VAR_PTS];
@@ -424,7 +472,6 @@ FF_ENABLE_DEPRECATION_WARNINGS
         if (inlink->type == AVMEDIA_TYPE_AUDIO)
             select->var_values[VAR_CONSUMED_SAMPLES_N] += frame->nb_samples;
     }
-
     select->var_values[VAR_PREV_PTS] = select->var_values[VAR_PTS];
     select->var_values[VAR_PREV_T]   = select->var_values[VAR_T];
 }
@@ -435,8 +482,10 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *frame)
     SelectContext *select = ctx->priv;
 
     select_frame(ctx, frame);
-    if (select->select)
+    if (select->select){
         return ff_filter_frame(ctx->outputs[select->select_out], frame);
+
+    }
 
     av_frame_free(&frame);
     return 0;
@@ -508,20 +557,20 @@ const AVFilter ff_af_aselect = {
 static int query_formats(AVFilterContext *ctx)
 {
     SelectContext *select = ctx->priv;
+    AVFilterFormats *formats;
+    int ret;
 
-    if (!select->do_scene_detect) {
-        return ff_default_query_formats(ctx);
+    if (select->black_if_no_motion) {
+        formats = ff_make_format_list((const enum AVPixelFormat[]){ AV_PIX_FMT_RGB24, AV_PIX_FMT_GRAY8, AV_PIX_FMT_YUV420P, AV_PIX_FMT_YUV422P, AV_PIX_FMT_YUV444P, AV_PIX_FMT_NONE });
+        if ((ret = ff_set_common_formats(ctx, formats)) < 0)
+            return ret;
     } else {
-        static const enum AVPixelFormat pix_fmts[] = {
-            AV_PIX_FMT_RGB24, AV_PIX_FMT_BGR24, AV_PIX_FMT_RGBA,
-            AV_PIX_FMT_ABGR, AV_PIX_FMT_BGRA, AV_PIX_FMT_GRAY8,
-            AV_PIX_FMT_YUV420P, AV_PIX_FMT_YUVJ420P,
-            AV_PIX_FMT_YUV422P, AV_PIX_FMT_YUVJ422P,
-            AV_PIX_FMT_YUV420P10,
-            AV_PIX_FMT_NONE
-        };
-        return ff_set_common_formats_from_list(ctx, pix_fmts);
+        formats = ff_all_formats(AVMEDIA_TYPE_VIDEO);
+        if ((ret = ff_set_common_formats(ctx, formats)) < 0)
+            return ret;
     }
+
+    return 0;
 }
 
 DEFINE_OPTIONS(select, AV_OPT_FLAG_VIDEO_PARAM|AV_OPT_FLAG_FILTERING_PARAM);
