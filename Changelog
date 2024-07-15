@@ -12,7 +12,11 @@ version <next>:
 - qsv_params option added for QSV encoders
 - VVC decoder compatible with DVB test content
 - xHE-AAC decoder
-
+- removed DEC Alpha DSP and support code
+- VVC encoding support via libvvenc
+- perlin video source
+- D3D12VA HEVC encoder
+- Cropping metadata parsing and writing in Matroska and MP4/MOV de/muxers
 
 version 7.0:
 - DXV DXT1 encoder

@@ -2544,6 +2544,11 @@ static void print_pkt_side_data(WriterContext *w,
             const AVStereo3D *stereo = (AVStereo3D *)sd->data;
             print_str("type", av_stereo3d_type_name(stereo->type));
             print_int("inverted", !!(stereo->flags & AV_STEREO3D_FLAG_INVERT));
+            print_str("view", av_stereo3d_view_name(stereo->view));
+            print_str("primary_eye", av_stereo3d_primary_eye_name(stereo->primary_eye));
+            print_int("baseline", stereo->baseline);
+            print_q("horizontal_disparity_adjustment", stereo->horizontal_disparity_adjustment, '/');
+            print_q("horizontal_field_of_view", stereo->horizontal_field_of_view, '/');
         } else if (sd->type == AV_PKT_DATA_SPHERICAL) {
             const AVSphericalMapping *spherical = (AVSphericalMapping *)sd->data;
             print_str("projection", av_spherical_projection_name(spherical->projection));
@@ -2623,6 +2628,11 @@ static void print_pkt_side_data(WriterContext *w,
             if (do_show_data)
                 writer_print_data(w, "data", sd->data, sd->size);
             writer_print_data_hash(w, "data_hash", sd->data, sd->size);
+        } else if (sd->type == AV_PKT_DATA_FRAME_CROPPING && sd->size >= sizeof(uint32_t) * 4) {
+            print_int("crop_top",    AV_RL32(sd->data));
+            print_int("crop_bottom", AV_RL32(sd->data + 4));
+            print_int("crop_left",   AV_RL32(sd->data + 8));
+            print_int("crop_right",  AV_RL32(sd->data + 12));
         } else if (sd->type == AV_PKT_DATA_AFD && sd->size > 0) {
             print_int("active_format", *sd->data);
         }
@@ -3922,7 +3932,7 @@ static int open_input_file(InputFile *ifile, const char *filename,
             AVDictionary *opts;
 
             err = filter_codec_opts(codec_opts, stream->codecpar->codec_id,
-                                    fmt_ctx, stream, codec, &opts);
+                                    fmt_ctx, stream, codec, &opts, NULL);
             if (err < 0)
                 exit(1);
 

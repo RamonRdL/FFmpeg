@@ -215,6 +215,8 @@ typedef struct MOVStreamContext {
     int timecode_track;
     int width;            ///< tkhd width
     int height;           ///< tkhd height
+    int h_spacing;        ///< pasp hSpacing
+    int v_spacing;        ///< pasp vSpacing
     int dts_shift;        ///< dts shift when ctts is negative
     uint32_t palette[256];
     int has_palette;
@@ -247,9 +249,11 @@ typedef struct MOVStreamContext {
 
     int32_t *display_matrix;
     AVStereo3D *stereo3d;
+    size_t stereo3d_size;
     AVSphericalMapping *spherical;
     size_t spherical_size;
     AVMasteringDisplayMetadata *mastering;
+    size_t mastering_size;
     AVContentLightMetadata *coll;
     size_t coll_size;
     AVAmbientViewingEnvironment *ambient;
