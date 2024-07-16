@@ -18591,6 +18591,7 @@ The height of the cropped area. Values between 0 and 1 represent a percentage of
 
 @item resize_to_crop (default: 0)
 If the crop filter is applied before the object tracker, it crops the image but not the motion vector list. This can lead to issues if motion vectors extend beyond the image boundaries. Setting this parameter to 1 repositions all motion vectors to fit within the input image size. Use this parameter if scaling is applied before this filter, and the results need to match the image size.
+In case if this paramter is set to 2, the filter will crop the image as the crop filter would.
 
 @item black_filter (default: 1)
 When active, this filter ignores all motion vectors above black pixels. This parameter is particularly useful when combined with the drawbox filter to exclude specific areas.

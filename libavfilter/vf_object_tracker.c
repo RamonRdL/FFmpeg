@@ -63,8 +63,8 @@
 #define PI 3.14159265358979323846
 #define SIZE 10000
 
-static const char* version = "2.06.14";
-static const char* release_date = "2024.04.02";
+static const char* version = "2.06.16";
+static const char* release_date = "2024.07.16";
 static int video_frame_count = 0;
 static int counter = 0;  // Used for history storing, to store, how many objects we have
 static int id_counter = 0;
@@ -80,6 +80,11 @@ static int last_mask_repeated_for = 0;
 static int last_frame_skipped = 0;
 static int tripwire_event_detected_on_the_frame = 0;
 static int first_frame_returned = 0;
+
+static int crop_x;
+static int crop_y;
+static int crop_width;
+static int crop_height;
 
 struct TDContext;
 typedef int (*PixelBelongsToRegion)(struct TDContext *s, int x, int y);
@@ -211,7 +216,7 @@ static const AVOption object_tracker_options[] = {
         {"crop_y", "filter motion vectors out of the image, as the crop filter does", OFFSET(crop_y), AV_OPT_TYPE_DOUBLE, {.dbl = 0}, 0, 1, FLAGS},
         {"crop_width", "filter motion vectors out of the image, as the crop filter does", OFFSET(crop_width), AV_OPT_TYPE_DOUBLE, {.dbl = 1}, 0, 1.0001, FLAGS},
         {"crop_height", "filter motion vectors out of the image, as the crop filter does", OFFSET(crop_height), AV_OPT_TYPE_DOUBLE, {.dbl = 1}, 0, 1.0001, FLAGS},
-        {"resize_to_crop", "resize motion vectors to fit into cropped screen", OFFSET(resize_to_crop), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, FLAGS },
+        {"resize_to_crop", "resize motion vectors to fit into cropped screen", OFFSET(resize_to_crop), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 2, FLAGS },
         {"black_filter", "ignore motion vectors above black pixels", OFFSET(black_filter), AV_OPT_TYPE_BOOL, { .i64 = 1 }, 0, 1, FLAGS },
         
         // Object filter
@@ -1188,6 +1193,21 @@ static int config_input(AVFilterLink *inlink)
         s->end_y = valid_coordinates[3];
     }
 
+    crop_x = s->crop_x;
+    crop_y = s->crop_y;
+    crop_width = s->crop_width;
+    crop_height = s->crop_height;
+
+    // Set the crop size for the image
+    if (s->crop_x <= 1)
+        crop_x = s->crop_x * inlink->w;
+    if (s->crop_y <= 1)
+        crop_y = s->crop_y * inlink->h;
+    if (s->crop_width <= 1)
+        crop_width = s->crop_width * inlink->w;
+    if (s->crop_height <= 1)
+        crop_height = s->crop_height * inlink->h;
+
     if (s->url)
         s->buffer = (char*) malloc(512 * sizeof(int));
 
@@ -1524,6 +1544,61 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *frame) {
     video_frame_count++;
     tripwire_event_detected_on_the_frame = 0;
     motion_vector_table = av_frame_get_side_data(frame, AV_FRAME_DATA_MOTION_VECTORS); // Get the mvs from the frame
+    if (s->resize_to_crop == 2) {  // Crop image based on relative size or pixel
+        const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(frame->format);        
+
+        int hsub = desc->log2_chroma_w;
+        int vsub = desc->log2_chroma_h;
+        int max_step[4] = { 1, 1, 1, 1 };  // Adjust if necessary for specific formats
+
+        // Ensure crop dimensions are valid
+        if (crop_width <= 0 || crop_height <= 0) {
+            av_log(ctx, AV_LOG_ERROR, "Invalid crop dimensions: crop_width=%d, crop_height=%d\n", crop_width, crop_height);
+            return AVERROR(EINVAL);
+        }
+
+        // Adjust crop dimensions for subsampling if necessary
+        if (!(desc->flags & AV_PIX_FMT_FLAG_HWACCEL)) {
+            if (crop_x < 0)
+                crop_x = 0;
+            if (crop_y < 0)
+                crop_y = 0;
+            if ((unsigned)crop_x + (unsigned)crop_width > frame->width)
+                crop_x = frame->width - crop_width;
+            if ((unsigned)crop_y + (unsigned)crop_height > frame->height)
+                crop_y = frame->height - crop_height;
+
+            // Adjust for chroma subsampling
+            crop_x &= ~((1 << hsub) - 1);
+            crop_y &= ~((1 << vsub) - 1);
+
+            frame->width = crop_width;
+            frame->height = crop_height;
+
+            frame->data[0] += crop_y * frame->linesize[0];
+            frame->data[0] += crop_x * max_step[0];
+
+            if (!(desc->flags & AV_PIX_FMT_FLAG_PAL)) {
+                for (int i = 1; i < 3; i++) {
+                    if (frame->data[i]) {
+                        frame->data[i] += (crop_y >> vsub) * frame->linesize[i];
+                        frame->data[i] += (crop_x * max_step[i]) >> hsub;
+                    }
+                }
+            }
+
+            // Handle alpha plane
+            if (frame->data[3]) {
+                frame->data[3] += crop_y * frame->linesize[3];
+                frame->data[3] += crop_x * max_step[3];
+            }
+        } else {
+            frame->crop_top += crop_y;
+            frame->crop_left += crop_x;
+            frame->crop_bottom = frame->height - frame->crop_top - frame->crop_bottom - crop_height;
+            frame->crop_right = frame->width - frame->crop_left - frame->crop_right - crop_width;
+        }
+    }
 
     if (motion_vector_table) {  // If the frame has mvs.
         int mv_table_size = motion_vector_table->size / sizeof(AVMotionVector);
@@ -1533,10 +1608,9 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *frame) {
         if (s->tripwire_marker_line && s->tripwire){
             draw_line(frame, s->start_x, s->start_y, s->end_x, s->end_y, color);
         }
-            
+        
         if (motion_image_size_x == 0)
             find_motion_vector_image_size(motion_vector_table, s, frame->width, frame->height);
-
         for (i = 0; i < mv_table_size; i++) {   // Loop trough all the mvs of the frame
             AVMotionVector *mv = &mvs[i];
 
@@ -1551,8 +1625,7 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *frame) {
                 continue;   
             if (s->crop_y > mv->src_y || mv->src_y > s->crop_height) // filter with crop
                 continue;
-
-            if (s->resize_to_crop == 1){  // Resize motion vectors
+            if (s->resize_to_crop > 0){  // Resize motion vectors
                 mv->src_x -= s->crop_x;
                 mv->dst_x -= s->crop_x;
                 mv->src_y -= s->crop_y;
@@ -1622,10 +1695,10 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *frame) {
             // if (s->mask_i_frames == 0)  // Dont mask the i frame, returns the original frame
         }
         first_frame_returned = 1;
+        
         return ff_filter_frame(outlink, frame);
     }
     // Go through all of the detected objects in a frame and decide if it belongs to an already existing object and get some information about it
-        
     for (int i = 0; i < obj_counter; i++) {
         if (objects[i]->counter > s->min_mv) { // Filter objects, based on mv number.
             calculate_result_data_to_object(objects[i]);
@@ -1687,7 +1760,6 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *frame) {
         }
     }
     
-
     for (int i = 0; i < obj_counter; i++) {  // free the allocated memory
         free(objects[i]);
     }

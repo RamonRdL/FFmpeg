@@ -85,3 +85,7 @@
         paraméterek: size, threshold, framme_back
     select:
         black_if_no_motion: Ha ez a paraméter bevan kapcsolva a filter akkor is ad képet ha nincsmozgás, csak ki van sötétítve
+
+2024.07.16 Sz Ramon
+    vf_object_tracker v 2.6.16:
+        resize_to_crop=2 -vel crop filterként is működik.
