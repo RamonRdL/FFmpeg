@@ -2218,6 +2218,7 @@ ARCH_EXT_LIST_PPC="
 ARCH_EXT_LIST_RISCV="
     rv
     rvv
+    rv_zicbop
     rv_zvbb
 "
 
@@ -2414,6 +2415,7 @@ SYSTEM_FUNCS="
     sysconf
     sysctl
     sysctlbyname
+    tempnam
     usleep
     UTGetOSTypeFromString
     VirtualAlloc
@@ -2762,6 +2764,7 @@ power8_deps="vsx"
 
 rv_deps="riscv"
 rvv_deps="rv"
+rv_zicbop="riscv"
 rv_zvbb_deps="rvv"
 
 loongson2_deps="mips"
@@ -3323,12 +3326,18 @@ nvenc_deps_any="libdl LoadLibrary"
 
 aac_mf_encoder_deps="mediafoundation"
 ac3_mf_encoder_deps="mediafoundation"
+av1_amf_encoder_deps="amf"
 av1_cuvid_decoder_deps="cuvid CUVIDAV1PICPARAMS"
 av1_mediacodec_decoder_deps="mediacodec"
 av1_mediacodec_encoder_deps="mediacodec"
 av1_mediacodec_encoder_select="extract_extradata_bsf"
 av1_nvenc_encoder_deps="nvenc NV_ENC_PIC_PARAMS_AV1"
 av1_nvenc_encoder_select="atsc_a53"
+av1_qsv_decoder_select="qsvdec"
+av1_qsv_encoder_deps="libvpl"
+av1_qsv_encoder_select="qsvenc"
+av1_vaapi_encoder_deps="VAEncPictureParameterBufferAV1"
+av1_vaapi_encoder_select="cbs_av1 vaapi_encode"
 h263_v4l2m2m_decoder_deps="v4l2_m2m h263_v4l2_m2m"
 h263_v4l2m2m_encoder_deps="v4l2_m2m h263_v4l2_m2m"
 h264_amf_encoder_deps="amf"
@@ -3418,12 +3427,7 @@ vp9_vaapi_encoder_select="vaapi_encode"
 vp9_qsv_encoder_deps="libmfx MFX_CODEC_VP9"
 vp9_qsv_encoder_select="qsvenc"
 vp9_v4l2m2m_decoder_deps="v4l2_m2m vp9_v4l2_m2m"
-av1_qsv_decoder_select="qsvdec"
-av1_qsv_encoder_select="qsvenc"
-av1_qsv_encoder_deps="libvpl"
-av1_amf_encoder_deps="amf"
-av1_vaapi_encoder_deps="VAEncPictureParameterBufferAV1"
-av1_vaapi_encoder_select="cbs_av1 vaapi_encode"
+vvc_qsv_decoder_select="qsvdec"
 
 # parsers
 aac_parser_select="adts_header mpeg4audio"
@@ -6364,6 +6368,7 @@ elif enabled riscv; then
 
     enabled rv && check_inline_asm rv '".option arch, +zbb\nrev8 t0, t1"'
     enabled rvv && check_inline_asm rvv '".option arch, +v\nvsetivli zero, 0, e8, m1, ta, ma"'
+    enabled rv_zicbop && check_inline_asm rv_zicbop '".option arch, +zicbop\nprefetch.r 64(a0)"'
     enabled rv_zvbb && check_inline_asm rv_zvbb '".option arch, +zvbb\nvclz.v v0, v8"'
 
 elif enabled x86; then
@@ -6554,6 +6559,7 @@ check_struct "sys/stat.h" "struct stat" st_mtim.tv_nsec -D_BSD_SOURCE
 check_func  strerror_r
 check_func  sysconf
 check_func  sysctl
+check_func  tempnam
 check_func  usleep
 
 check_func_headers conio.h kbhit
@@ -7048,7 +7054,7 @@ enabled openal            && { check_pkg_config openal "openal >= 1.1" "AL/al.h"
                              { test_cpp_condition "AL/al.h" "defined(AL_VERSION_1_1)" ||
                                die "ERROR: openal must be installed and version must be 1.1 or compatible"; }
 enabled opencl            && { check_pkg_config opencl OpenCL CL/cl.h clEnqueueNDRangeKernel ||
-                               check_lib opencl OpenCL/cl.h clEnqueueNDRangeKernel -Wl,-framework,OpenCL ||
+                               check_lib opencl OpenCL/cl.h clEnqueueNDRangeKernel "-framework OpenCL" ||
                                check_lib opencl CL/cl.h clEnqueueNDRangeKernel -lOpenCL ||
                                die "ERROR: opencl not found"; } &&
                              { test_cpp_condition "OpenCL/cl.h" "defined(CL_VERSION_1_2)" ||
@@ -7056,8 +7062,8 @@ enabled opencl            && { check_pkg_config opencl OpenCL CL/cl.h clEnqueueN
                                die "ERROR: opencl must be installed and version must be 1.2 or compatible"; }
 enabled opengl            && { check_lib opengl GL/glx.h glXGetProcAddress "-lGL" ||
                                check_lib opengl windows.h wglGetProcAddress "-lopengl32 -lgdi32" ||
-                               check_lib opengl OpenGL/gl3.h glGetError "-Wl,-framework,OpenGL" ||
-                               check_lib opengl ES2/gl.h glGetError "-isysroot=${sysroot} -Wl,-framework,OpenGLES" ||
+                               check_lib opengl OpenGL/gl3.h glGetError "-framework OpenGL" ||
+                               check_lib opengl ES2/gl.h glGetError "-isysroot=${sysroot} -framework OpenGLES" ||
                                die "ERROR: opengl not found."
                              }
 enabled omx_rpi           && { test_code cc OMX_Core.h OMX_IndexConfigBrcmVideoRequestIFrame ||
@@ -7125,12 +7131,12 @@ if enabled decklink; then
 fi
 
 enabled securetransport &&
-    check_func SecIdentityCreate "-Wl,-framework,CoreFoundation -Wl,-framework,Security" &&
-    check_lib securetransport "Security/SecureTransport.h Security/Security.h" "SSLCreateContext" "-Wl,-framework,CoreFoundation -Wl,-framework,Security" ||
+    check_func SecIdentityCreate "-framework CoreFoundation -framework Security" &&
+    check_lib securetransport "Security/SecureTransport.h Security/Security.h" "SSLCreateContext" "-framework CoreFoundation -framework Security" ||
         disable securetransport
 
 enabled securetransport &&
-    check_func SecItemImport "-Wl,-framework,CoreFoundation -Wl,-framework,Security"
+    check_func SecItemImport "-framework CoreFoundation -framework Security"
 
 enabled schannel &&
     check_func_headers "windows.h security.h" InitializeSecurityContext -DSECURITY_WIN32 -lsecur32 &&
@@ -7919,6 +7925,7 @@ if enabled loongarch; then
     echo "LASX enabled              ${lasx-no}"
 fi
 if enabled riscv; then
+    echo "RISC-V CBO Prefetch       ${rv_zicbop-no}"
     echo "RISC-V Vector enabled     ${rvv-no}"
 fi
 echo "debug symbols             ${debug-no}"

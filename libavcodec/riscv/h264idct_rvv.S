@@ -1,4 +1,7 @@
 /*
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2024 J. Dekker <jdek@itanimul.li>
  * Copyright © 2024 Rémi Denis-Courmont.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -52,6 +55,7 @@ func ff_h264_idct4_rvv, zve32x
 endfunc
 
 func ff_h264_idct_add_8_rvv, zve32x
+        lpad    0
         csrwi       vxrm, 0
 .Lidct_add4_8_rvv:
         vsetivli    zero, 4, e16, mf2, ta, ma
@@ -107,6 +111,7 @@ endfunc
 
 func ff_h264_idct_add_16_rvv, zve32x
         csrwi       vxrm, 0
+.Lidct_add4_16_rvv:
         vsetivli    zero, 4, e32, m1, ta, ma
         addi        t1, a1, 1 * 4 * 4
         vle32.v     v0, (a1)
@@ -147,7 +152,7 @@ func ff_h264_idct_add_16_rvv, zve32x
         vmax.vx     v\n, v\n, zero
         .endr
         .irp    n,0,1,2,3
-        vmin.vx     v\n, v\n, a3
+        vmin.vx     v\n, v\n, a5
         .endr
         vsetvli     zero, zero, e16, mf2, ta, ma
         vncvt.x.x.w v4, v0
@@ -209,6 +214,7 @@ func ff_h264_idct8_rvv, zve32x
 endfunc
 
 func ff_h264_idct8_add_8_rvv, zve32x
+        lpad    0
         csrwi       vxrm, 0
 .Lidct8_add_8_rvv:
         vsetivli    zero, 8, e16, m1, ta, ma
@@ -294,10 +300,11 @@ func ff_h264_idct8_add_8_rvv, zve32x
         ret
 endfunc
 
-func ff_h264_idct8_add_16_rvv, zve32x
-        li      a4, 8
+func ff_h264_idct8_add_16_rvv, zve32x, zba
         csrwi   vxrm, 0
-        vsetivli    a5, 8, e32, m1, ta, ma
+.Lidct8_add_16_rvv:
+        li      a4, 8
+        vsetivli    a3, 8, e32, m1, ta, ma
 1:
         addi    t1, a1, 1 * 8 * 4
         vle32.v     v0, (a1)
@@ -313,11 +320,11 @@ func ff_h264_idct8_add_16_rvv, zve32x
         vle32.v     v5, (t5)
         addi    a7, a1, 7 * 8 * 4
         vle32.v     v6, (t6)
-        sub     a4, a4, a5
+        sub     a4, a4, a3
         vle32.v     v7, (a7)
         jal     t0, ff_h264_idct8_rvv
         vse32.v     v0, (a1)
-        sh2add  a1, a5, a1
+        sh2add  a1, a3, a1
         vse32.v     v1, (t1)
         vse32.v     v2, (t2)
         vse32.v     v3, (t3)
@@ -329,7 +336,7 @@ func ff_h264_idct8_add_16_rvv, zve32x
 
         addi    a1, a1, -8 * 4
         li      a4, 8
-        slli    a6, a5, 3 + 2
+        slli    a6, a3, 3 + 2
 2:
         vsetvli     zero, zero, e32, m1, ta, ma
         vlseg8e32.v v0, (a1)
@@ -348,7 +355,7 @@ func ff_h264_idct8_add_16_rvv, zve32x
         vle16.v     v21, (t5)
         add     a7, t6, a2
         vle16.v     v22, (t6)
-        sub     a4, a4, a5
+        sub     a4, a4, a3
         vle16.v     v23, (a7)
         .irp    n,0,1,2,3,4,5,6,7
         vssra.vi    v\n, v\n, 6
@@ -368,7 +375,7 @@ func ff_h264_idct8_add_16_rvv, zve32x
         vmax.vx     v\n, v\n, zero
         .endr
         .irp    n,0,1,2,3,4,5,6,7
-        vmin.vx     v\n, v\n, a3
+        vmin.vx     v\n, v\n, a5
         .endr
         vsetvli     zero, zero, e16, mf2, ta, ma
         vncvt.x.x.w v16, v0
@@ -380,7 +387,7 @@ func ff_h264_idct8_add_16_rvv, zve32x
         vncvt.x.x.w v22, v6
         vncvt.x.x.w v23, v7
         vse16.v     v16, (a0)
-        sh1add  a0, a5, a0
+        sh1add  a0, a3, a0
         vse16.v     v17, (t1)
         vse16.v     v18, (t2)
         vse16.v     v19, (t3)
@@ -400,13 +407,138 @@ endfunc
 
 .irp    depth, 9, 10, 12, 14
 func ff_h264_idct_add_\depth\()_rvv, zve32x
-        li      a3, (1 << \depth) - 1
+        lpad    0
+        li      a5, (1 << \depth) - 1
         j       ff_h264_idct_add_16_rvv
 endfunc
 
 func ff_h264_idct8_add_\depth\()_rvv, zve32x
-        li      a3, (1 << \depth) - 1
+        lpad    0
+        li      a5, (1 << \depth) - 1
         j       ff_h264_idct8_add_16_rvv
+endfunc
+.endr
+
+.macro idct_dc_add8 width
+func ff_h264_idct\width\()_dc_add_8_rvv, zve64x, b
+        lpad    0
+.if \width == 8
+        vsetivli        zero, \width, e8, mf2, ta, ma
+.else
+        vsetivli        zero, \width, e8, mf4, ta, ma
+.endif
+        lh              t0, 0(a1)
+        li              t1, 255
+        addi            t0, t0, 32
+        srai            t0, t0, 6
+        sh              zero, 0(a1)
+.if \width == 8
+        li              a6, \width * \width
+        vlse64.v        v24, (a0), a2
+        vsetvli         zero, a6, e8, m4, ta, ma
+.else
+        vlse32.v        v24, (a0), a2
+        vsetivli        zero, \width * \width, e8, m1, ta, ma
+.endif
+        bgez            t0, 1f
+
+        neg             t0, t0
+        minu            t0, t0, t1
+        vssubu.vx       v24, v24, t0
+ .if \width == 8
+        vsetivli        zero, \width, e8, mf2, ta, ma
+        vsse64.v        v24, (a0), a2
+.else
+        vsetivli        zero, \width, e8, mf4, ta, ma
+        vsse32.v        v24, (a0), a2
+.endif
+        ret
+1:
+        minu            t0, t0, t1
+        vsaddu.vx       v24, v24, t0
+.if \width == 8
+        vsetivli        zero, \width, e8, mf2, ta, ma
+        vsse64.v        v24, (a0), a2
+.else
+        vsetivli        zero, \width, e8, mf4, ta, ma
+        vsse32.v        v24, (a0), a2
+.endif
+        ret
+endfunc
+.endm
+
+idct_dc_add8 4
+idct_dc_add8 8
+
+.macro idct_dc_add width
+func ff_h264_idct\width\()_dc_add_16_rvv, zve64x, zba
+.if \width == 8
+        vsetivli        zero, \width, e16, m1, ta, ma
+.else
+        vsetivli        zero, \width, e16, mf2, ta, ma
+.endif
+        lw              t0, 0(a1)
+        addi            t0, t0, 32
+        srai            t0, t0, 6
+        sw              zero, 0(a1)
+        add             t1, a0, a2
+        sh1add          t2, a2, a0
+        sh1add          t3, a2, t1
+.if \width == 8
+        sh2add          t4, a2, a0
+        sh2add          t5, a2, t1
+        sh2add          t6, a2, t2
+        sh2add          a7, a2, t3
+.endif
+        vle16.v         v0, (a0)
+        vle16.v         v1, (t1)
+        vle16.v         v2, (t2)
+        vle16.v         v3, (t3)
+.if \width == 8
+        vle16.v         v4, (t4)
+        vle16.v         v5, (t5)
+        vle16.v         v6, (t6)
+        vle16.v         v7, (a7)
+        vsetvli         a6, zero, e16, m8, ta, ma
+.else
+        vsetvli         a6, zero, e16, m4, ta, ma
+.endif
+        vadd.vx         v0, v0, t0
+        vmax.vx         v0, v0, zero
+        vmin.vx         v0, v0, a5
+.if \width == 8
+        vsetivli        zero, \width, e16, m1, ta, ma
+.else
+        vsetivli        zero, \width, e16, mf2, ta, ma
+.endif
+        vse16.v         v0, (a0)
+        vse16.v         v1, (t1)
+        vse16.v         v2, (t2)
+        vse16.v         v3, (t3)
+.if \width == 8
+        vse16.v         v4, (t4)
+        vse16.v         v5, (t5)
+        vse16.v         v6, (t6)
+        vse16.v         v7, (a7)
+.endif
+        ret
+endfunc
+.endm
+
+idct_dc_add 4
+idct_dc_add 8
+
+.irp depth,9,10,12,14
+func ff_h264_idct4_dc_add_\depth\()_rvv, zve64x
+        lpad    0
+        li              a5, (1 << \depth) - 1
+        j               ff_h264_idct4_dc_add_16_rvv
+endfunc
+
+func ff_h264_idct8_dc_add_\depth\()_rvv, zve64x
+        lpad    0
+        li              a5, (1 << \depth) - 1
+        j               ff_h264_idct8_dc_add_16_rvv
 endfunc
 .endr
 
@@ -415,26 +547,21 @@ const ff_h264_scan8
         .byte   034, 035, 044, 045, 036, 037, 046, 047
 endconst
 
-#if (__riscv_xlen == 64)
-.irp    depth, 8
-func ff_h264_idct_add16_\depth\()_rvv, zve32x
+.macro  idct4_adds type, depth
+func ff_h264_idct_add\type\()_\depth\()_rvv, zve32x, b
+.if \depth == 8
+        lpad    0
+.endif
         csrwi   vxrm, 0
-        addi    sp, sp, -80
         lla     t0, ff_h264_scan8
-        sd      s0,   (sp)
-        li      t1, 32 << (\depth > 8)
-        mv      s0, sp
-        sd      ra,  8(sp)
-        sd      s1, 16(sp)
-        sd      s2, 24(sp)
-        sd      s3, 32(sp)
-        sd      s4, 40(sp)
-        sd      s5, 48(sp)
-        sd      s6, 56(sp)
-        sd      s7, 64(sp)
+        li      t1, 32 * (\depth / 8)
         vsetivli  zero, 16, e8, m1, ta, ma
         vle8.v    v8, (t0)
+.if \depth == 8
         vlse16.v  v16, (a2), t1
+.else
+        vlse32.v  v16, (a2), t1
+.endif
         vluxei8.v v12, (a4), v8
 .if \depth == 8
         vsetvli   zero, zero, e16, m2, ta, ma
@@ -443,139 +570,85 @@ func ff_h264_idct_add16_\depth\()_rvv, zve32x
 .endif
         vmsne.vi  v1, v16, 0
         vsetvli   zero, zero, e8, m1, ta, ma
+.ifc \type, 16
         vmseq.vi  v2, v12, 1
-        vmsne.vi  v0, v12, 0
-        vmand.mm  v1, v1, v2
-        vsetvli   zero, zero, e16, m2, ta, ma
-        vmv.x.s   s2, v0
-        vmv.x.s   s3, v1
-        li      s1, 16
-        mv      s4, a0
-        mv      s5, a1
-        mv      s6, a2
-        mv      s7, a3
-1:
-        andi    t0, s2, 1
-        addi    s1, s1, -1
-        srli    s2, s2, 1
-        beqz    t0, 3f     # if (nnz)
-        lw      t2, (s5)   # block_offset[i]
-        andi    t1, s3, 1
-        mv      a1, s6
-        mv      a2, s7
-        add     a0, s4, t2
-        beqz    t1, 2f    # if (nnz == 1 && block[i * 16])
-        call    ff_h264_idct_dc_add_\depth\()_c
-        j       3f
-2:
-        call    .Lidct_add4_\depth\()_rvv
-3:
-        srli    s3, s3, 1
-        addi    s5, s5, 4
-        addi    s6, s6, 16 * 2 << (\depth > 8)
-        bnez    s1, 1b
-
-        ld      s7, 64(sp)
-        ld      s6, 56(sp)
-        ld      s5, 48(sp)
-        ld      s4, 40(sp)
-        ld      s3, 32(sp)
-        ld      s2, 24(sp)
-        ld      s1, 16(sp)
-        ld      ra,  8(sp)
-        ld      s0,  0(sp)
-        addi    sp, sp, 80
-        ret
-endfunc
-
-func ff_h264_idct_add16intra_\depth\()_rvv, zve32x
-        csrwi   vxrm, 0
-        addi    sp, sp, -80
-        lla     t0, ff_h264_scan8
-        sd      s0,   (sp)
-        li      t1, 32 << (\depth > 8)
-        mv      s0, sp
-        sd      ra,  8(sp)
-        sd      s1, 16(sp)
-        sd      s2, 24(sp)
-        sd      s3, 32(sp)
-        sd      s4, 40(sp)
-        sd      s5, 48(sp)
-        sd      s6, 56(sp)
-        sd      s7, 64(sp)
-        vsetivli  zero, 16, e8, m1, ta, ma
-        vle8.v    v8, (t0)
-        vlse16.v  v16, (a2), t1
-        vluxei8.v v12, (a4), v8
-.if \depth == 8
-        vsetvli   zero, zero, e16, m2, ta, ma
-.else
-        vsetvli   zero, zero, e32, m4, ta, ma
 .endif
-        vmsne.vi  v1, v16, 0
-        vsetvli   zero, zero, e8, m1, ta, ma
         vmsne.vi  v0, v12, 0
+.ifc \type, 16
+        vmand.mm  v1, v1, v2
+.endif
         vsetvli   zero, zero, e16, m2, ta, ma
-        vmv.x.s   s2, v0
-        vmv.x.s   s3, v1
-        li      s1, 16
-        mv      s4, a0
-        mv      s5, a1
-        mv      s6, a2
-        mv      s7, a3
+        vmv.x.s   a4, v0
+        vmv.x.s   a7, v1
+        zext.h  a4, a4
+        slli    a7, a7, 16
+        mv      t4, a0
+        or      a4, a4, a7
+        mv      t5, a1
+        mv      a1, a2
+        mv      a2, a3
+        li      a3, 16
+        mv      a7, ra
 1:
-        andi    t0, s2, 1
-        addi    s1, s1, -1
-        srli    s2, s2, 1
-        lw      t2, (s5)   # block_offset[i]
-        andi    t1, s3, 1
-        mv      a1, s6
-        mv      a2, s7
-        add     a0, s4, t2
+        andi    t0, a4, 1
+        addi    a3, a3, -1
+.ifc \type, 16
+        beqz    t0, 3f     # if (nnz)
+.endif
+        lw      t2, (t5)   # block_offset[i]
+        bexti   t1, a4, 16
+        add     a0, t4, t2
+.ifc \type, 16
+        bnez    t1, 2f     # if (nnz == 1 && block[i * 16])
+.else
         beqz    t0, 2f     # if (nnzc[scan8[i]])
-        call    .Lidct_add4_\depth\()_rvv
+.endif
+        jal     .Lidct_add4_\depth\()_rvv
         j       3f
 2:
+.ifnc \type, 16
         beqz    t1, 3f    # if (block[i * 16])
-        call    ff_h264_idct_dc_add_\depth\()_c
+.endif
+        jal     ff_h264_idct4_dc_add_\depth\()_rvv
 3:
-        srli    s3, s3, 1
-        addi    s5, s5, 4
-        addi    s6, s6, 16 * 2 << (\depth > 8)
-        bnez    s1, 1b
+        srli    a4, a4, 1
+        addi    t5, t5, 4
+        addi    a1, a1, 16 * 2 * (\depth / 8)
+        bnez    a3, 1b
 
-        ld      s7, 64(sp)
-        ld      s6, 56(sp)
-        ld      s5, 48(sp)
-        ld      s4, 40(sp)
-        ld      s3, 32(sp)
-        ld      s2, 24(sp)
-        ld      s1, 16(sp)
-        ld      ra,  8(sp)
-        ld      s0,  0(sp)
-        addi    sp, sp, 80
+        mv      ra, a7
         ret
 endfunc
+.endm
 
-func ff_h264_idct8_add4_\depth\()_rvv, zve32x
+.irp    depth, 8, 16
+idct4_adds 16, \depth
+idct4_adds 16intra, \depth
+
+#if (__riscv_xlen == 64)
+func ff_h264_idct8_add4_\depth\()_rvv, zve32x, b
+.if \depth == 8
+        lpad    0
+.endif
         csrwi       vxrm, 0
-        addi    sp, sp, -80
+        addi    sp, sp, -48
         lla     t0, ff_h264_scan8
         sd      s0,   (sp)
-        li      t1, 4 * 32 << (\depth > 8)
+        li      t1, 4 * 32 * (\depth / 8)
         mv      s0, sp
         li      t2, 4
         sd      ra,  8(sp)
         sd      s1, 16(sp)
         sd      s2, 24(sp)
-        sd      s3, 32(sp)
-        sd      s4, 40(sp)
-        sd      s5, 48(sp)
-        sd      s6, 56(sp)
-        sd      s7, 64(sp)
+        sd      s4, 32(sp)
+        sd      s5, 40(sp)
         vsetivli  zero, 4, e8, mf4, ta, ma
         vlse8.v   v8, (t0), t2
+.if \depth == 8
         vlse16.v  v16, (a2), t1
+.else
+        vlse32.v  v16, (a2), t1
+.endif
         vluxei8.v v12, (a4), v8
 .if \depth == 8
         vsetvli   zero, zero, e16, mf2, ta, ma
@@ -588,44 +661,68 @@ func ff_h264_idct8_add4_\depth\()_rvv, zve32x
         vmsne.vi  v0, v12, 0
         vmand.mm  v1, v1, v2
         vmv.x.s   s2, v0
-        vmv.x.s   s3, v1
+        vmv.x.s   a7, v1
+        zext.h  s2, s2
+        slli    a7, a7, 16
         li      s1, 4
+        or      s2, s2, a7
         mv      s4, a0
         mv      s5, a1
-        mv      s6, a2
-        mv      s7, a3
+        mv      a1, a2
+        mv      a2, a3
 1:
         andi    t0, s2, 1
         addi    s1, s1, -1
-        srli    s2, s2, 1
         beqz    t0, 3f     # if (nnz)
         lw      t2, (s5)   # block_offset[i]
-        andi    t1, s3, 1
-        mv      a1, s6
-        mv      a2, s7
+        bexti   t1, s2, 16
         add     a0, s4, t2
-        beqz    t1, 2f    # if (nnz == 1 && block[i * 16])
-        call    ff_h264_idct8_dc_add_\depth\()_c
+        bnez    t1, 2f    # if (nnz == 1 && block[i * 16])
+        jal     .Lidct8_add_\depth\()_rvv
+.if \depth == 8
         j       3f
+.else
+        j       4f        # idct8_add_16 updates a1
+.endif
 2:
-        call    .Lidct8_add_\depth\()_rvv
+        jal     ff_h264_idct8_dc_add_\depth\()_rvv
 3:
-        srli    s3, s3, 1
+        addi    a1, a1, 4 * 16 * 2 * (\depth / 8)
+4:
+        srli    s2, s2, 1
         addi    s5, s5, 4 * 4
-        addi    s6, s6, 4 * 16 * 2 << (\depth > 8)
         bnez    s1, 1b
 
-        ld      s7, 64(sp)
-        ld      s6, 56(sp)
-        ld      s5, 48(sp)
-        ld      s4, 40(sp)
-        ld      s3, 32(sp)
+        ld      s5, 40(sp)
+        ld      s4, 32(sp)
         ld      s2, 24(sp)
         ld      s1, 16(sp)
         ld      ra,  8(sp)
         ld      s0,  0(sp)
-        addi    sp, sp, 80
+        addi    sp, sp, 48
         ret
 endfunc
-.endr
 #endif
+.endr
+
+.irp    depth, 9, 10, 12, 14
+func ff_h264_idct_add16_\depth\()_rvv, zve32x
+        lpad    0
+        li      a5, (1 << \depth) - 1
+        j       ff_h264_idct_add16_16_rvv
+endfunc
+
+func ff_h264_idct_add16intra_\depth\()_rvv, zve32x
+        lpad    0
+        li      a5, (1 << \depth) - 1
+        j       ff_h264_idct_add16intra_16_rvv
+endfunc
+
+#if (__riscv_xlen == 64)
+func ff_h264_idct8_add4_\depth\()_rvv, zve32x
+        lpad    0
+        li      a5, (1 << \depth) - 1
+        j       ff_h264_idct8_add4_16_rvv
+endfunc
+#endif
+.endr

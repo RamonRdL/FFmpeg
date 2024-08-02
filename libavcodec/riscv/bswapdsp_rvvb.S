@@ -1,4 +1,6 @@
 /*
+ * Copyright © 2024 Rémi Denis-Courmont.
+ *
  * This file is part of FFmpeg.
  *
  * FFmpeg is free software; you can redistribute it and/or
@@ -16,39 +18,35 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#ifndef AVUTIL_RISCV_TIMER_H
-#define AVUTIL_RISCV_TIMER_H
-
 #include "config.h"
+#include "libavutil/riscv/asm.S"
 
-#if HAVE_INLINE_ASM
-#include <stdint.h>
+func ff_bswap32_buf_rvvb, zve32x, zvbb, zba
+        lpad    0
+1:
+        vsetvli t0, a2, e32, m8, ta, ma
+        vle32.v v8, (a1)
+        sub     a2, a2, t0
+        vrev8.v v8, v8
+        sh2add  a1, t0, a1
+        vse32.v v8, (a0)
+        sh2add  a0, t0, a0
+        bnez    a2, 1b
 
-static inline uint64_t ff_read_time(void)
-{
-#if (__riscv_xlen >= 64)
-    uintptr_t cycles;
+        ret
+endfunc
 
-    __asm__ volatile ("rdtime  %0" : "=r" (cycles));
+func ff_bswap16_buf_rvvb, zve32x, zvbb, zba
+        lpad    0
+1:
+        vsetvli t0, a2, e16, m8, ta, ma
+        vle16.v v8, (a1)
+        sub     a2, a2, t0
+        vrev8.v v8, v8
+        sh1add  a1, t0, a1
+        vse16.v v8, (a0)
+        sh1add  a0, t0, a0
+        bnez    a2, 1b
 
-#else
-    uint64_t cycles;
-    uint32_t hi, lo, check;
-
-    __asm__ volatile (
-        "1: rdtimeh %0\n"
-        "   rdtime  %1\n"
-        "   rdtimeh %2\n"
-        "   bne %0, %2, 1b\n" : "=r" (hi), "=r" (lo), "=r" (check));
-
-    cycles = (((uint64_t)hi) << 32) | lo;
-
-#endif
-    return cycles;
-}
-
-#define AV_READ_TIME ff_read_time
-#define FF_TIMER_UNITS "ticks"
-
-#endif
-#endif /* AVUTIL_RISCV_TIMER_H */
+        ret
+endfunc

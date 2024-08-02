@@ -18,32 +18,17 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
+#include "config.h"
 #include "libavutil/riscv/asm.S"
 
-func ff_vector_clipf_rvf, f
-NOHWF   fmv.w.x fa0, a3
-NOHWF   fmv.w.x fa1, a4
+#if HAVE_RV_ZICBOP
+func ff_prefetch_rv_zicbop, zicbop
 1:
-        flw     ft0,   (a1)
-        flw     ft1,  4(a1)
-        fmax.s  ft0, ft0, fa0
-        flw     ft2,  8(a1)
-        fmax.s  ft1, ft1, fa0
-        flw     ft3, 12(a1)
-        fmax.s  ft2, ft2, fa0
-        addi    a2, a2, -4
-        fmax.s  ft3, ft3, fa0
-        addi    a1, a1, 16
-        fmin.s  ft0, ft0, fa1
-        fmin.s  ft1, ft1, fa1
-        fsw     ft0,   (a0)
-        fmin.s  ft2, ft2, fa1
-        fsw     ft1,  4(a0)
-        fmin.s  ft3, ft3, fa1
-        fsw     ft2,  8(a0)
-        fsw     ft3, 12(a0)
-        addi    a0, a0, 16
+        addi    a2, a2, -1
+        prefetch.r  (a0)
+        add     a0, a0, a1
         bnez    a2, 1b
 
         ret
 endfunc
+#endif
