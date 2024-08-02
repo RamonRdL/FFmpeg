@@ -63,8 +63,8 @@
 #define PI 3.14159265358979323846
 #define SIZE 10000
 
-static const char* version = "2.06.16";
-static const char* release_date = "2024.07.16";
+static const char* version = "2.06.17";
+static const char* release_date = "2024.08.02";
 static int video_frame_count = 0;
 static int counter = 0;  // Used for history storing, to store, how many objects we have
 static int id_counter = 0;
@@ -1525,6 +1525,14 @@ static void calculate_result_data_to_object(Object *obj)
     obj->center_y /= obj->counter;
 }
 
+static int config_output(AVFilterLink *link)
+{
+    link->w = crop_width;
+    link->h = crop_height;
+    return 0;
+}
+
+
 static int filter_frame(AVFilterLink *inlink, AVFrame *frame) {
     AVFilterContext *ctx = inlink->dst;
     AVFrameSideData *motion_vector_table;
@@ -1798,7 +1806,13 @@ static const AVFilterPad object_tracker_inputs[] = {
         },
 };
 
-static const AVFilterPad object_tracker_outputs[] = { { .name = "default", .type = AVMEDIA_TYPE_VIDEO, }, };
+static const AVFilterPad object_tracker_outputs[] = {
+     {
+        .name = "default",
+        .type = AVMEDIA_TYPE_VIDEO,
+        .config_props = config_output,
+    }, 
+};
 
 const AVFilter ff_vf_object_tracker = { 
         .name           = "object_tracker", 

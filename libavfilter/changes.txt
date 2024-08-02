@@ -89,3 +89,7 @@
 2024.07.16 Sz Ramon
     vf_object_tracker v 2.6.16:
         resize_to_crop=2 -vel crop filterként is működik.
+
+2024.08.02 Sz Ramon
+    vf_object_tracker v 2.6.17:
+        resize_to_crop=2 hiba javítás
