@@ -63,8 +63,8 @@
 #define PI 3.14159265358979323846
 #define SIZE 10000
 
-static const char* version = "2.06.17";
-static const char* release_date = "2024.08.02";
+static const char* version = "2.06.18";
+static const char* release_date = "2024.08.12";
 static int video_frame_count = 0;
 static int counter = 0;  // Used for history storing, to store, how many objects we have
 static int id_counter = 0;
@@ -81,6 +81,7 @@ static int last_frame_skipped = 0;
 static int tripwire_event_detected_on_the_frame = 0;
 static int first_frame_returned = 0;
 
+static int resize_to_crop;
 static int crop_x;
 static int crop_y;
 static int crop_width;
@@ -1193,6 +1194,7 @@ static int config_input(AVFilterLink *inlink)
         s->end_y = valid_coordinates[3];
     }
 
+    resize_to_crop = s->resize_to_crop;
     crop_x = s->crop_x;
     crop_y = s->crop_y;
     crop_width = s->crop_width;
@@ -1527,8 +1529,10 @@ static void calculate_result_data_to_object(Object *obj)
 
 static int config_output(AVFilterLink *link)
 {
-    link->w = crop_width;
-    link->h = crop_height;
+    if (resize_to_crop > 1){
+        link->w = crop_width;
+        link->h = crop_height;
+    }
     return 0;
 }
 
