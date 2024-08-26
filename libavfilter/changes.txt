@@ -97,3 +97,7 @@
 2024.08.12 Sz Ramon
     vf_object_tracker v 2.6.18:
         resize_to_crop hiba javítás
+
+2024.08.26 Sz Ramon
+    vf_object_tracker v 2.6.19
+        Nagy felbontásúképnél crash javítva (Túlcsordult a SIZE változón)

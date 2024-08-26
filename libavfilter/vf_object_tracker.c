@@ -61,10 +61,10 @@
 #include "video.h"
 
 #define PI 3.14159265358979323846
-#define SIZE 10000
+#define SIZE 100000
 
-static const char* version = "2.06.18";
-static const char* release_date = "2024.08.12";
+static const char* version = "2.06.19";
+static const char* release_date = "2024.08.26";
 static int video_frame_count = 0;
 static int counter = 0;  // Used for history storing, to store, how many objects we have
 static int id_counter = 0;
