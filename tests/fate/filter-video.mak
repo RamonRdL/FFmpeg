@@ -433,7 +433,7 @@ fate-filter-scale2ref_keep_aspect: CMD = framemd5 -frames:v 5 -/filter_complex $
 
 FATE_FILTER_VSYNTH-$(call FILTERDEMDEC, SCALE, RAWVIDEO, RAWVIDEO) += fate-filter-scalechroma
 fate-filter-scalechroma: tests/data/vsynth1.yuv
-fate-filter-scalechroma: CMD = framecrc -flags bitexact -s 352x288 -pix_fmt yuv444p -i $(TARGET_PATH)/tests/data/vsynth1.yuv -pix_fmt yuv420p -sws_flags +bitexact -vf scale=out_v_chr_pos=33:out_h_chr_pos=151
+fate-filter-scalechroma: CMD = framecrc -flags bitexact -s 352x288 -pix_fmt yuv444p -i $(TARGET_PATH)/tests/data/vsynth1.yuv -pix_fmt yuv420p -sws_flags +bitexact -vf scale=out_chroma_loc=bottomleft
 
 FATE_FILTER_VSYNTH_VIDEO_FILTER-$(CONFIG_VFLIP_FILTER) += fate-filter-vflip
 fate-filter-vflip: CMD = video_filter "vflip"
@@ -752,6 +752,12 @@ fate-filter-refcmp-ssim-rgb: CMD = refcmp_metadata ssim rgb24 0.015
 
 FATE_FILTER_REFCMP_METADATA-$(CONFIG_SSIM_FILTER) += fate-filter-refcmp-ssim-yuv
 fate-filter-refcmp-ssim-yuv: CMD = refcmp_metadata ssim yuv422p 0.015
+
+FATE_FILTER_REFCMP_METADATA-$(call ALLYES, XPSNR_FILTER SCALE_FILTER) += fate-filter-refcmp-xpsnr-rgb
+fate-filter-refcmp-xpsnr-rgb: CMD = refcmp_metadata xpsnr rgb24 0.002
+
+FATE_FILTER_REFCMP_METADATA-$(CONFIG_XPSNR_FILTER) += fate-filter-refcmp-xpsnr-yuv
+fate-filter-refcmp-xpsnr-yuv: CMD = refcmp_metadata xpsnr yuv422p 0.0015
 
 FATE_FILTER-$(call ALLYES, TESTSRC2_FILTER SPLIT_FILTER AVGBLUR_FILTER        \
                            METADATA_FILTER WRAPPED_AVFRAME_ENCODER NULL_MUXER \
