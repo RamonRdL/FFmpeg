@@ -57,14 +57,14 @@
 #include "avfilter.h"
 #include "formats.h"
 #include "drawutils.h"
-#include "internal.h"
+#include "libavutil/internal.h"
 #include "video.h"
 
 #define PI 3.14159265358979323846
 #define SIZE 100000
 
-static const char* version = "2.06.19";
-static const char* release_date = "2024.08.26";
+static const char* version = "2.06.20";
+static const char* release_date = "2024.09.11";
 static int video_frame_count = 0;
 static int counter = 0;  // Used for history storing, to store, how many objects we have
 static int id_counter = 0;
@@ -80,6 +80,7 @@ static int last_mask_repeated_for = 0;
 static int last_frame_skipped = 0;
 static int tripwire_event_detected_on_the_frame = 0;
 static int first_frame_returned = 0;
+static int skipped_i_frame = 0;
 
 static int resize_to_crop;
 static int crop_x;
@@ -141,6 +142,7 @@ typedef struct TDContext {
     int std_err_text_output_enable;
     int mask_not_intersect_frames;
     int mask_reduce;
+    int disable_mask_on_the_n_iframe;
     int mask_detail_level;
 } TDContext;
 
@@ -238,6 +240,7 @@ static const AVOption object_tracker_options[] = {
         {"mask_not_intersect_frames", "makes every frame fully black if no intersect is detected", OFFSET(mask_not_intersect_frames), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, FLAGS },
         {"mask_detail_level", "changes the mask type", OFFSET(mask_detail_level), AV_OPT_TYPE_BOOL, { .i64 = 1 }, 0, 1, FLAGS },
         {"mask_reduce", "Makes the object mask bigger.", OFFSET(mask_reduce), AV_OPT_TYPE_INT, { .i64 = 15 }, -1, 1000, FLAGS },
+        {"disable_mask_on_the_n_iframe", "Disables i frame mask on everyn iframe.", OFFSET(disable_mask_on_the_n_iframe), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 1001, FLAGS },
 
         // Logging
         {"json_output_line_break", "set the output line breaks", OFFSET(line_break), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, FLAGS },
@@ -1700,11 +1703,23 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *frame) {
             return 0;
         }
         if (s->mask_static_areas || s->mask_not_intersect_frames){
-            if (s->mask_i_frames == 2 && !s->mask_not_intersect_frames)  // mask as the previous frame
-                keep_mask_on_image(last_detected_objects, last_detected_objects_counter, frame, s);
-            if (s->mask_i_frames == 1 || s->mask_not_intersect_frames)  // a full black image
-                mask_image(objects, 0, frame, s);
-            // if (s->mask_i_frames == 0)  // Dont mask the i frame, returns the original frame
+            int mask_needed = 1;
+            if (s->disable_mask_on_the_n_iframe == 0)  // If the I frame mask is not disabled on some frames
+                mask_needed = 1;
+            else {
+                skipped_i_frame++;
+                if (skipped_i_frame >= s->disable_mask_on_the_n_iframe)
+                    mask_needed = 0;
+            }
+            if (mask_needed){
+                // if (s->mask_i_frames == 0)  // Dont mask the i frame, returns the original frame
+                if (s->mask_i_frames == 2 && !s->mask_not_intersect_frames)  // mask as the previous frame
+                    keep_mask_on_image(last_detected_objects, last_detected_objects_counter, frame, s);
+                if (s->mask_i_frames == 1 || s->mask_not_intersect_frames)  // a full black image
+                    mask_image(objects, 0, frame, s);
+            } else {
+                skipped_i_frame = 0;
+            }
         }
         first_frame_returned = 1;
         

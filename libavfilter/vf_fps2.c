@@ -16,7 +16,7 @@
 #include "avfilter.h"
 #include "formats.h"
 #include "drawutils.h"
-#include "internal.h"
+#include "libavutil/internal.h"
 #include "video.h"
 
 struct FPS2Context;
@@ -27,7 +27,7 @@ typedef struct FPS2Context {
     double fps;
     double frames_sent;
     double frames_arrived;
-
+    AVRational frame_rate;
 } FPS2Context;
 
 #define OFFSET(x) offsetof(FPS2Context, x)
@@ -62,7 +62,7 @@ static int config_input(AVFilterLink *inlink)
 {
     AVFilterContext *ctx = inlink->dst;
     FPS2Context *s = ctx->priv;
-    s->input_fps = inlink->frame_rate.num;
+    s->input_fps = s->frame_rate.num;
     if (s->input_fps < s->fps)
         av_log(ctx, AV_LOG_WARNING, "Input fps lower than get set for fps2.\n");
     s->fps = s->fps/s->input_fps;

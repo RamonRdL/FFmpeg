@@ -14,7 +14,7 @@
 #include "avfilter.h"
 #include "formats.h"
 #include "drawutils.h"
-#include "internal.h"
+#include "libavutil/internal.h"
 #include "video.h"
 #include "libavutil/mem.h" // Add this include for memory allocation functions
 

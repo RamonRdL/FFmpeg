@@ -99,5 +99,15 @@
         resize_to_crop hiba javítás
 
 2024.08.26 Sz Ramon
-    vf_object_tracker v 2.6.19
+    vf_object_tracker v 2.6.19:
         Nagy felbontásúképnél crash javítva (Túlcsordult a SIZE változón)
+
+2024.09.11 Sz Ramon
+    vf_object_tracker v 2.6.20:
+        disable_mask_on_the_n_iframe paraméter, amivel teljesen kikapcsolható minden n-edik i frame maszkolása
+        ffmpeg_master frissítés: internal.h -> libavutil/internal.h
+    vf_fps2:
+        ffmpeg_master frissítés: internal.h -> libavutil/internal.h
+        ffmpeg_master frissítés: FPS2Context + AVRational frame_rate;
+    vf_static_mask:
+        ffmpeg_master frissítés: internal.h -> libavutil/internal.h
