@@ -18647,6 +18647,20 @@ If this parameter is enabled, it will make every frame fully black except in cas
 The mask areas will be black if no mv-s inside them.
 With this parameter its possible to make the checking area for mv-s bigger, creating an outline for the object and reducing the masked rectangles "inside" the object
 
+@item disable_mask_on_the_n_iframe (default: 0)
+This parameter allows every Nth I-frame to pass through unmasked, even if it would otherwise be masked.
+
+@item disable_mask_on_the_n_frame (default: 0)
+This parameter allows every Nth frame to pass through unmasked, even if it would otherwise be masked.
+
+@item disable_mask_type_on_frame (default: 0)
+If set to 0: Frames will be counted, and the unmasked frames will be returned as determined by disable_mask_on_the_n_frame or disable_mask_on_the_n_iframe.
+If set to 1: Unmasked frames will only be returned if the mask would otherwise cover the entire frame. For example, if a moving object within the frame is not fully masked, unmasked images won't be returned.
+
+@item fps (default: input_fps)
+This parameter sets the output frame rate (fps).
+The filter cannot generate a higher output fps than the input fps.
+
 @item json_output_line_break (default: 0)
 Allows line breaks in the output.
 

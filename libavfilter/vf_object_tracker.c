@@ -63,8 +63,8 @@
 #define PI 3.14159265358979323846
 #define SIZE 100000
 
-static const char* version = "2.06.20";
-static const char* release_date = "2024.09.11";
+static const char* version = "2.06.21";
+static const char* release_date = "2024.09.30";
 static int video_frame_count = 0;
 static int counter = 0;  // Used for history storing, to store, how many objects we have
 static int id_counter = 0;
@@ -80,7 +80,8 @@ static int last_mask_repeated_for = 0;
 static int last_frame_skipped = 0;
 static int tripwire_event_detected_on_the_frame = 0;
 static int first_frame_returned = 0;
-static int skipped_i_frame = 0;
+static int skipped_frame_at_masking = 0;
+static int last_not_i_frame_not_fully_masked = 0;
 
 static int resize_to_crop;
 static int crop_x;
@@ -143,7 +144,16 @@ typedef struct TDContext {
     int mask_not_intersect_frames;
     int mask_reduce;
     int disable_mask_on_the_n_iframe;
+    int disable_mask_on_the_n_frame;
+    int disable_mask_type_on_frame;
     int mask_detail_level;
+    
+    // fps filtering
+    double input_fps;
+    double fps;
+    double frames_sent;
+    double frames_arrived;
+    AVRational frame_rate;
 } TDContext;
 
 typedef struct Rectangle_center
@@ -240,7 +250,10 @@ static const AVOption object_tracker_options[] = {
         {"mask_not_intersect_frames", "makes every frame fully black if no intersect is detected", OFFSET(mask_not_intersect_frames), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, FLAGS },
         {"mask_detail_level", "changes the mask type", OFFSET(mask_detail_level), AV_OPT_TYPE_BOOL, { .i64 = 1 }, 0, 1, FLAGS },
         {"mask_reduce", "Makes the object mask bigger.", OFFSET(mask_reduce), AV_OPT_TYPE_INT, { .i64 = 15 }, -1, 1000, FLAGS },
-        {"disable_mask_on_the_n_iframe", "Disables i frame mask on everyn iframe.", OFFSET(disable_mask_on_the_n_iframe), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 1001, FLAGS },
+        {"disable_mask_on_the_n_iframe", "Disables i frame mask on every n iframe.", OFFSET(disable_mask_on_the_n_iframe), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 1001, FLAGS },
+        {"disable_mask_on_the_n_frame", "Disables frame mask on every n frame.", OFFSET(disable_mask_on_the_n_frame), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 1001, FLAGS },
+        {"disable_mask_type_on_frame", "Disables frame mask on every n frame.", OFFSET(disable_mask_type_on_frame), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 1, FLAGS },
+        {"fps", "Sets the output fps.", OFFSET(fps), AV_OPT_TYPE_DOUBLE, { .dbl = 0 }, 0, 1001, FLAGS },
 
         // Logging
         {"json_output_line_break", "set the output line breaks", OFFSET(line_break), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, FLAGS },
@@ -1134,9 +1147,21 @@ static int config_input(AVFilterLink *inlink)
 
     AVFilterContext *ctx = inlink->dst;
     TDContext *s = ctx->priv;
+    FilterLink *il = ff_filter_link(inlink);
     s->filter_id = ctx->name[strlen(ctx->name) - 1] - '0';
 
     s->bytes = 0;
+
+    // fps
+
+    s->input_fps = il->frame_rate.num;
+    if (s->fps != 0){
+        if (s->input_fps < s->fps)
+            av_log(ctx, AV_LOG_WARNING, "Input fps lower than get set for object_tracker, and this filter cant create extra frames. input fps: %f\n", s->input_fps);
+    }
+    s->fps = s->fps/s->input_fps;
+    s->frames_sent = 0;
+    s->frames_arrived = 0;
 
     //  if there is an url set, open connection
     if (s->url) 
@@ -1555,6 +1580,15 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *frame) {
     int active_frame = 0;
     int intersect_frame = 0;
 
+    if(s->fps != 0){
+        s->frames_arrived++;
+        if ((s->frames_sent/s->frames_arrived > s->fps)){
+            av_frame_free(&frame);
+            return 0;
+        }
+    }
+    s->frames_sent++;
+
     detected_onjects_number_on_frame = 0;
     video_frame_count++;
     tripwire_event_detected_on_the_frame = 0;
@@ -1704,21 +1738,27 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *frame) {
         }
         if (s->mask_static_areas || s->mask_not_intersect_frames){
             int mask_needed = 1;
-            if (s->disable_mask_on_the_n_iframe == 0)  // If the I frame mask is not disabled on some frames
-                mask_needed = 1;
-            else {
-                skipped_i_frame++;
-                if (skipped_i_frame >= s->disable_mask_on_the_n_iframe)
+            if (!s->disable_mask_on_the_n_iframe == 0) {  // If the I frame mask is not disabled on some frames
+                skipped_frame_at_masking++;
+                if (skipped_frame_at_masking >= s->disable_mask_on_the_n_iframe)
                     mask_needed = 0;
             }
+            
+            if (!s->disable_mask_on_the_n_frame == 0) {  // If the frame mask is not disabled on some frames
+                skipped_frame_at_masking++;
+                if (skipped_frame_at_masking >= s->disable_mask_on_the_n_frame)
+                    mask_needed = 0;
+            }
+
             if (mask_needed){
+                skipped_frame_at_masking = 0;
                 // if (s->mask_i_frames == 0)  // Dont mask the i frame, returns the original frame
                 if (s->mask_i_frames == 2 && !s->mask_not_intersect_frames)  // mask as the previous frame
                     keep_mask_on_image(last_detected_objects, last_detected_objects_counter, frame, s);
                 if (s->mask_i_frames == 1 || s->mask_not_intersect_frames)  // a full black image
                     mask_image(objects, 0, frame, s);
             } else {
-                skipped_i_frame = 0;
+                skipped_frame_at_masking = 0;
             }
         }
         first_frame_returned = 1;
@@ -1742,15 +1782,35 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *frame) {
         }
     }
     if (s->mask_static_areas || s->mask_not_intersect_frames){
-        if (s->mask_not_intersect_frames && !intersect_frame){
-            mask_image(objects, 0, frame, s);
+        int mask_needed = 1;
+        
+        if (!s->disable_mask_on_the_n_frame == 0) {  // If the frame mask is not disabled on some frames
+                skipped_frame_at_masking++;
+                if (skipped_frame_at_masking >= s->disable_mask_on_the_n_frame)
+                    mask_needed = 0;
+            }
+
+        if (mask_needed){
+            if (s->disable_mask_type_on_frame == 1 && last_not_i_frame_not_fully_masked == 1)  // if the image has mask and the disable mask type is 1 then dont return unmasked iamage
+                skipped_frame_at_masking = 0;
+
+            if (obj_counter > 0)  // If the object counter in more then one then the image has unmasked parts
+                last_not_i_frame_not_fully_masked = 1;
+            else  // full black image
+                last_not_i_frame_not_fully_masked = 0;
+
+            if (s->mask_not_intersect_frames && !intersect_frame){
+                mask_image(objects, 0, frame, s);
+            }
+            if (active_frame){
+                last_mask_repeated_for = 0;
+                mask_image(objects, obj_counter, frame, s);
+            } else{
+                keep_mask_on_image(last_detected_objects, last_detected_objects_counter, frame, s);
+            }
         }
-        if (active_frame){
-            last_mask_repeated_for = 0;
-            mask_image(objects, obj_counter, frame, s);
-        } else{
-            keep_mask_on_image(last_detected_objects, last_detected_objects_counter, frame, s);
-        }
+        else
+            skipped_frame_at_masking = 0;
     }    
     
     //if the url is set and there is data to send then we write the output to the url
