@@ -214,11 +214,11 @@ Object *objects_with_id[SIZE]; ///< storage for the IDs
 
 static const AVOption object_tracker_options[] = {
         // tripwire
-        {"tripwire", "turn the tripwire on or off", OFFSET(tripwire), AV_OPT_TYPE_BOOL, {.i64 = 1}, 0, 1, FLAGS },
+        {"tripwire", "turn the tripwire on or off", OFFSET(tripwire), AV_OPT_TYPE_BOOL, {.i64 = 0}, 0, 1, FLAGS },
         {"tripwire_line_px", "a point's x coordinate what the tripwire will cross", OFFSET(start_x), AV_OPT_TYPE_DOUBLE, {.dbl = -1}, -1, 10000, FLAGS },
         {"tripwire_line_py", "a point's y coordinate what the tripwire will cross", OFFSET(start_y), AV_OPT_TYPE_DOUBLE, {.dbl = -1}, -1, 10000, FLAGS },
         {"tripwire_line_angle", "set the angle for the tripwire", OFFSET(tripwire_line_angle), AV_OPT_TYPE_DOUBLE, {.dbl = 90}, 0, 180, FLAGS },  
-        {"tripwire_marker_line", "set the tripwire visibility", OFFSET(tripwire_marker_line), AV_OPT_TYPE_BOOL, {.i64 = 1}, 0, 1, FLAGS },
+        {"tripwire_marker_line", "set the tripwire visibility", OFFSET(tripwire_marker_line), AV_OPT_TYPE_BOOL, {.i64 = 0}, 0, 1, FLAGS },
         {"tripwire_type", "0: touch, 1: the center goes throug", OFFSET(tripwire_type), AV_OPT_TYPE_BOOL, {.i64 = 0}, 0, 1, FLAGS },
 
          //motion vector filter
@@ -239,7 +239,7 @@ static const AVOption object_tracker_options[] = {
         {"angle_filter_range", "set the allowed range of the angle", OFFSET(angle_range), AV_OPT_TYPE_DOUBLE, {.dbl = 45}, 0, 360, FLAGS },
 
         // visuals
-        {"object_marker_box", "set the object marker box visibility", OFFSET(object_marker_box), AV_OPT_TYPE_BOOL, {.i64 = 1}, 0, 1, FLAGS },
+        {"object_marker_box", "set the object marker box visibility", OFFSET(object_marker_box), AV_OPT_TYPE_BOOL, {.i64 = 0}, 0, 1, FLAGS },
         {"object_rectangle_thickness", "set the rectangles thickness", OFFSET(thickness), AV_OPT_TYPE_INT, { .i64 = 2 }, 0, 200, FLAGS },
         {"object_marker_box_history", "set the object marker box history visibility", OFFSET(object_marker_box_history), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, FLAGS },
         {"object_history_draw_length", "set how many object are visible in the past", OFFSET(detection_threshold), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 50, FLAGS },
