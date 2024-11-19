@@ -118,3 +118,10 @@
             disable_mask_on_the_n_frame paraméter, amivel teljesen kikapcsolható minden n-edik frame maszkolása
             disable_mask_type_on_frame, amivel beállíthatjuk hogy akkoris maszkolunk-e mikor van mozgás
             fps, amivel lelehet csökkentetni az fps-t
+
+2024.10.29 Sz Ramon
+    vf_object_tracker v 2.6.22
+        Default paraméterek: 
+            object_marker_box= 1 -> 0
+            tripwire_marker_line= 1 -> 0
+        disable_mask_on_the_n_frame paraméter javítása

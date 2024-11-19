@@ -63,8 +63,8 @@
 #define PI 3.14159265358979323846
 #define SIZE 100000
 
-static const char* version = "2.06.21";
-static const char* release_date = "2024.09.30";
+static const char* version = "2.06.22";
+static const char* release_date = "2024.10.29";
 static int video_frame_count = 0;
 static int counter = 0;  // Used for history storing, to store, how many objects we have
 static int id_counter = 0;
@@ -1654,9 +1654,8 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *frame) {
         AVMotionVector *mvs = (AVMotionVector *)motion_vector_table->data;
 
         // draw tripwire line if needed
-        if (s->tripwire_marker_line && s->tripwire){
+        if (s->tripwire_marker_line && s->tripwire)
             draw_line(frame, s->start_x, s->start_y, s->end_x, s->end_y, color);
-        }
         
         if (motion_image_size_x == 0)
             find_motion_vector_image_size(motion_vector_table, s, frame->width, frame->height);
@@ -1751,15 +1750,13 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *frame) {
             }
 
             if (mask_needed){
-                skipped_frame_at_masking = 0;
                 // if (s->mask_i_frames == 0)  // Dont mask the i frame, returns the original frame
                 if (s->mask_i_frames == 2 && !s->mask_not_intersect_frames)  // mask as the previous frame
                     keep_mask_on_image(last_detected_objects, last_detected_objects_counter, frame, s);
                 if (s->mask_i_frames == 1 || s->mask_not_intersect_frames)  // a full black image
                     mask_image(objects, 0, frame, s);
-            } else {
+            } else
                 skipped_frame_at_masking = 0;
-            }
         }
         first_frame_returned = 1;
         
@@ -1799,15 +1796,13 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *frame) {
             else  // full black image
                 last_not_i_frame_not_fully_masked = 0;
 
-            if (s->mask_not_intersect_frames && !intersect_frame){
+            if (s->mask_not_intersect_frames && !intersect_frame)
                 mask_image(objects, 0, frame, s);
-            }
             if (active_frame){
                 last_mask_repeated_for = 0;
                 mask_image(objects, obj_counter, frame, s);
-            } else{
+            } else
                 keep_mask_on_image(last_detected_objects, last_detected_objects_counter, frame, s);
-            }
         }
         else
             skipped_frame_at_masking = 0;
